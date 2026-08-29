@@ -1,0 +1,6 @@
+{
+  "name": "Triquetra'26 Coding and Debugging - The Bug Arena",
+  "description": "Official Triquetra'26 Coding & Debugging Arena featuring 3 progressive rounds (Bug Scan, Code Repair, Boss Arena) across IT, AIDS, and CSBS departments with strict tab-switching restrictions and timed competitive code fixing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
