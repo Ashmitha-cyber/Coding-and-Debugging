@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   X,
   Lock,
@@ -27,6 +27,7 @@ import {
   ChevronUp,
   FileCode,
   Download,
+  Upload,
   Layers,
   Cpu,
   Sparkles,
@@ -127,6 +128,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
   const [participantToEdit, setParticipantToEdit] = useState<ParticipantRecord | null>(null);
   const [editorDefaultDept, setEditorDefaultDept] = useState<Department>('IT');
   const [isSyncing, setIsSyncing] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load data unconditionally on mount / state change + periodic multi-PC sync
   useEffect(() => {
@@ -182,11 +184,44 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
   const handleManualSync = async () => {
     setIsSyncing(true);
     soundManager.playBeep(520, 'sine', 0.04);
-    await Promise.all([loadParticipants(), loadAllConclusions(), questionStore.fetchServerQuestions()]);
-    setTimeout(() => {
+    try {
+      const [syncedList] = await Promise.all([
+        participantStore.syncWithServer(),
+        loadAllConclusions(),
+        questionStore.fetchServerQuestions()
+      ]);
+      setParticipants(syncedList);
+      showNotice(`⚡ Synced ${syncedList.length} total participants from all arena PCs!`);
+    } catch (err) {
+      showNotice('Sync completed.');
+    } finally {
       setIsSyncing(false);
-      showNotice('⚡ Synced real-time data from all connected arena PCs!');
-    }, 400);
+    }
+  };
+
+  const handleImportJsonFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const text = event.target?.result as string;
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed)) {
+          const merged = await participantStore.importAndMergeParticipants(parsed);
+          setParticipants(merged);
+          soundManager.playSuccess();
+          showNotice(`🎉 Successfully imported and merged ${parsed.length} records! Total database: ${merged.length}`);
+        } else {
+          showNotice('Invalid JSON format: Array of participant records expected.');
+        }
+      } catch (err) {
+        showNotice('Failed to parse uploaded JSON file.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   const loadQuestions = () => {
@@ -775,6 +810,15 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
 
               {/* Master Authentication & Multi-PC Live Sync Indicator */}
               <div className="flex items-center gap-2 pb-2 text-[11px] font-mono">
+                {/* Hidden File input for JSON import */}
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleImportJsonFile}
+                  accept=".json"
+                  className="hidden"
+                />
+
                 <button
                   type="button"
                   onClick={handleManualSync}
@@ -785,6 +829,17 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
                   <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
                   <span className="hidden sm:inline">Sync All PCs</span>
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="px-2.5 py-1 rounded bg-white/5 hover:bg-white/15 border border-gray-700 text-gray-300 flex items-center gap-1.5 transition-all cursor-pointer"
+                  title="Import / Merge JSON database from another PC"
+                >
+                  <Upload className="w-3 h-3 text-cyan-400" />
+                  <span className="hidden sm:inline">Import JSON</span>
+                </button>
+
                 <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-emerald-950/40 border border-emerald-500/30 text-emerald-400">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                   <span className="hidden sm:inline">Multi-PC Live Sync</span>

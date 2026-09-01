@@ -195,11 +195,107 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// POST bidirectional sync: merges participants from this PC with central server database
+app.post('/api/participants/sync', (req, res) => {
+  try {
+    const { localParticipants } = req.body;
+    let modified = false;
+
+    if (Array.isArray(localParticipants)) {
+      for (const local of localParticipants) {
+        if (!local || (!local.registerNumber && !local.id)) continue;
+        const regNo = (local.registerNumber || '').toUpperCase().trim();
+
+        const index = participants.findIndex(
+          (p) => (p.registerNumber && p.registerNumber.toUpperCase() === regNo) || (local.id && p.id === local.id)
+        );
+
+        if (index >= 0) {
+          const s = participants[index];
+          // Smart merge: retain highest progress, scores, and latest updates
+          const mergedRound1 = Math.max(local.round1Score ?? 0, s.round1Score ?? 0);
+          const mergedRound2 = Math.max(local.round2Score ?? 0, s.round2Score ?? 0);
+          const mergedRound3 = Math.max(local.round3Score ?? 0, s.round3Score ?? 0);
+          const calculatedTotal = mergedRound1 + mergedRound2 + mergedRound3;
+          const mergedTotal = Math.max(local.totalScore ?? 0, s.totalScore ?? 0, calculatedTotal);
+          const isQualified = !!(local.qualifiedForRound2 || s.qualifiedForRound2);
+
+          participants[index] = {
+            ...s,
+            ...local,
+            registerNumber: regNo || s.registerNumber,
+            name: local.name || s.name,
+            department: local.department || s.department,
+            year: local.year || s.year,
+            teamName: local.teamName || s.teamName,
+            partnerName: local.partnerName || s.partnerName,
+            partnerRegisterNumber: local.partnerRegisterNumber || s.partnerRegisterNumber,
+            round1Score: mergedRound1,
+            round2Score: mergedRound2,
+            round3Score: mergedRound3,
+            totalScore: mergedTotal,
+            tabViolations: Math.max(local.tabViolations ?? 0, s.tabViolations ?? 0),
+            timeUsed: local.timeUsed && local.timeUsed !== '0m 00s' ? local.timeUsed : s.timeUsed,
+            timeUsedSeconds: Math.max(local.timeUsedSeconds ?? 0, s.timeUsedSeconds ?? 0),
+            qualifiedForRound2: isQualified,
+            resultStatus: isQualified ? 'Qualified' : (s.resultStatus || local.resultStatus || 'Draft'),
+            status: s.status === 'Completed' || local.status === 'Completed' ? 'Completed' : (s.status || local.status || 'Active'),
+            finishingStatus: local.finishingStatus || s.finishingStatus,
+            updatedAt: new Date().toISOString()
+          };
+          modified = true;
+        } else {
+          // Add new participant from client PC to central database
+          participants.unshift({
+            id: local.id || `P-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            name: local.name || 'Candidate',
+            year: local.year || 'III',
+            department: local.department || 'IT',
+            teamName: local.teamName,
+            partnerName: local.partnerName,
+            partnerRegisterNumber: local.partnerRegisterNumber,
+            round1Score: local.round1Score ?? 0,
+            round2Score: local.round2Score ?? 0,
+            round3Score: local.round3Score ?? 0,
+            totalScore: local.totalScore ?? 0,
+            tabViolations: local.tabViolations ?? 0,
+            timeUsed: local.timeUsed || '0m 00s',
+            timeUsedSeconds: local.timeUsedSeconds || 0,
+            status: local.status || 'Active',
+            finishingStatus: local.finishingStatus || 'In Progress',
+            qualifiedForRound2: !!local.qualifiedForRound2,
+            resultStatus: local.resultStatus || 'Draft',
+            registeredAt: local.registeredAt || new Date().toISOString(),
+            ...local,
+            registerNumber: regNo
+          });
+          modified = true;
+        }
+      }
+    }
+
+    if (modified) {
+      saveJsonFile(PARTICIPANTS_FILE, participants);
+    }
+
+    return res.json({
+      success: true,
+      participants,
+      count: participants.length,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    console.error('Error during participant sync:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // GET all participants (accessed by any PC / Admin panel / Leaderboard)
 app.get('/api/participants', (req, res) => {
   res.json({
     success: true,
     participants,
+    count: participants.length,
     timestamp: new Date().toISOString()
   });
 });

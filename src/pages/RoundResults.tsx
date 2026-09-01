@@ -24,6 +24,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { RoundResult, ParticipantInfo, ParticipantRecord, Question, QuestionAnswerState } from '../types';
 import { LEVEL_CONFIGS } from '../data/questions';
 import { soundManager } from '../utils/audio';
+import { participantStore } from '../utils/participantStore';
 
 interface RoundResultsProps {
   round: 1 | 2 | 3;
@@ -60,23 +61,20 @@ export const RoundResults: React.FC<RoundResultsProps> = ({
     try {
       // Check conclusion status for Round 1
       if (round === 1) {
-        const deptKey = participant?.department ? `triquetra_round1_concluded_${participant.department}` : null;
-        const isDeptConcluded = deptKey ? localStorage.getItem(deptKey) === 'true' : false;
-        const isGlobalConcluded = localStorage.getItem('triquetra_round1_concluded') === 'true';
-        const concluded = isDeptConcluded || isGlobalConcluded;
+        const conclusions = participantStore.getCachedConclusions();
+        const isDeptConcluded = participant?.department ? conclusions[participant.department] : false;
+        const concluded = isDeptConcluded || conclusions.global;
         setIsRoundConcluded(concluded);
       } else {
         // Round 2 and Round 3 are automatically ready for detailed review once submitted
         setIsRoundConcluded(true);
       }
 
-      const stored = localStorage.getItem('triquetra_participants');
-      if (stored) {
-        const list: ParticipantRecord[] = JSON.parse(stored);
-        
+      const list = participantStore.getCachedParticipants();
+      if (list && list.length > 0) {
         // Find current participant record
         if (participant?.registerNumber) {
-          const current = list.find((p) => p.registerNumber === participant.registerNumber);
+          const current = list.find((p) => p.registerNumber.toUpperCase() === participant.registerNumber.toUpperCase());
           if (current) {
             setParticipantRecord(current);
             setIsQualified(!!current.qualifiedForRound2);

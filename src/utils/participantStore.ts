@@ -14,8 +14,7 @@ export interface ConclusionsState {
 
 class ParticipantStore {
   private pollingInterval: NodeJS.Timeout | null = null;
-  private isFetching = false;
-  private lastFetchTime = 0;
+  private isSyncing = false;
 
   // Get cached participants synchronously from localStorage
   getCachedParticipants(): ParticipantRecord[] {
@@ -71,32 +70,43 @@ class ParticipantStore {
     } catch (e) {}
   }
 
-  // Fetch all participants from central server
-  async fetchAllParticipants(): Promise<ParticipantRecord[]> {
-    if (this.isFetching) {
+  // Full bidirectional sync: uploads this PC's local cache & downloads all other PCs' candidates
+  async syncWithServer(): Promise<ParticipantRecord[]> {
+    if (this.isSyncing) {
       return this.getCachedParticipants();
     }
 
-    this.isFetching = true;
+    this.isSyncing = true;
     try {
-      const res = await fetch('/api/participants', {
-        headers: { 'Cache-Control': 'no-cache' }
+      const localParticipants = this.getCachedParticipants();
+
+      const res = await fetch('/api/participants/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache'
+        },
+        body: JSON.stringify({ localParticipants })
       });
+
       if (res.ok) {
         const data = await res.json();
         if (data.success && Array.isArray(data.participants)) {
           this.setLocalCache(data.participants);
-          this.lastFetchTime = Date.now();
           return data.participants;
         }
       }
     } catch (e) {
-      // Fallback to local cache if network/offline
-      console.warn('Network issue fetching participants from server, using cache', e);
+      console.warn('Sync attempt failed, using local cache:', e);
     } finally {
-      this.isFetching = false;
+      this.isSyncing = false;
     }
     return this.getCachedParticipants();
+  }
+
+  // Fetch all participants (invokes bidirectional sync)
+  async fetchAllParticipants(): Promise<ParticipantRecord[]> {
+    return this.syncWithServer();
   }
 
   // Fetch conclusions state from server
@@ -126,7 +136,7 @@ class ParticipantStore {
 
   // Register or Update a participant record (Sends to Server + updates local cache)
   async registerOrUpdate(record: Partial<ParticipantRecord> & { registerNumber: string }): Promise<ParticipantRecord> {
-    // 1. Update local cache immediately for optimistic UI
+    // 1. Update local cache immediately for instant responsive UI
     const cached = this.getCachedParticipants();
     const regNo = record.registerNumber.toUpperCase().trim();
     const existingIndex = cached.findIndex(
@@ -146,7 +156,7 @@ class ParticipantStore {
       updatedList[existingIndex] = targetRecord;
     } else {
       targetRecord = {
-        id: record.id || `P-${Date.now()}`,
+        id: record.id || `P-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
         name: record.name || 'Anonymous Candidate',
         registerNumber: regNo,
         year: record.year || 'III',
@@ -163,6 +173,7 @@ class ParticipantStore {
         timeUsedSeconds: record.timeUsedSeconds || 0,
         tabViolations: record.tabViolations || 0,
         status: record.status || 'Active',
+        finishingStatus: record.finishingStatus || 'In Progress',
         registeredAt: record.registeredAt || new Date().toISOString(),
         ...record
       };
@@ -266,6 +277,31 @@ class ParticipantStore {
     }
   }
 
+  // Import external JSON list and merge with database
+  async importAndMergeParticipants(newRecords: ParticipantRecord[]): Promise<ParticipantRecord[]> {
+    const existing = this.getCachedParticipants();
+    const combined = [...newRecords, ...existing];
+    this.setLocalCache(combined);
+
+    try {
+      const res = await fetch('/api/participants/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ localParticipants: combined })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.participants)) {
+          this.setLocalCache(data.participants);
+          return data.participants;
+        }
+      }
+    } catch (e) {
+      console.error('Failed to import and sync records', e);
+    }
+    return this.getCachedParticipants();
+  }
+
   // Clear department participants
   async clearDepartment(department: Department): Promise<boolean> {
     const cached = this.getCachedParticipants();
@@ -325,10 +361,10 @@ class ParticipantStore {
     return updated;
   }
 
-  // Start periodic polling to sync from all PCs
-  startPolling(intervalMs: number = 2500): () => void {
-    // Initial fetch
-    this.fetchAllParticipants();
+  // Start periodic polling to sync bidirectionally from all PCs
+  startPolling(intervalMs: number = 2000): () => void {
+    // Initial bidirectional sync
+    this.syncWithServer();
     this.fetchConclusions();
 
     if (this.pollingInterval) {
@@ -336,7 +372,7 @@ class ParticipantStore {
     }
 
     this.pollingInterval = setInterval(() => {
-      this.fetchAllParticipants();
+      this.syncWithServer();
       this.fetchConclusions();
     }, intervalMs);
 
