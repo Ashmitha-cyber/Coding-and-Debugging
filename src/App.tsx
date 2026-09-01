@@ -36,7 +36,7 @@ export default function App() {
   // Listen for admin question updates & initialize multi-PC polling
   useEffect(() => {
     questionStore.fetchServerQuestions();
-    const stopPolling = participantStore.startPolling(3500);
+    const stopPolling = participantStore.startPolling(2500);
 
     const handleQuestionsUpdate = () => {
       setAllQuestions(questionStore.getAllQuestions());

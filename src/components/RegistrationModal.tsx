@@ -29,7 +29,7 @@ export const RegistrationModal: React.FC<RegistrationModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
       setError('Please enter participant name');
@@ -63,7 +63,7 @@ export const RegistrationModal: React.FC<RegistrationModalProps> = ({
     // Store participant in participantStore (updates local cache + syncs to central server)
     try {
       localStorage.setItem('triquetra_current_participant', JSON.stringify(participantData));
-      await participantStore.registerOrUpdate({
+      participantStore.registerOrUpdate({
         ...participantData,
         id: `P-${Date.now()}`,
         registeredAt: new Date().toISOString(),
@@ -81,6 +81,18 @@ export const RegistrationModal: React.FC<RegistrationModalProps> = ({
     }
 
     onRegister(participantData);
+  };
+
+  const fillDemo = (dept: Department) => {
+    setDepartment(dept);
+    setName('Alex Vance');
+    setRegisterNumber(`21${dept}1042`);
+    setYear('III');
+    setTeamName(`CYBER_${dept}_WARRIORS`);
+    setIsDuo(true);
+    setPartnerName('Jordan Miller');
+    setPartnerRegisterNumber(`21${dept}1043`);
+    setError('');
   };
 
   return (
@@ -286,6 +298,34 @@ export const RegistrationModal: React.FC<RegistrationModalProps> = ({
                 </div>
               </div>
             )}
+          </div>
+
+          {/* Quick Demo Pre-fills */}
+          <div className="flex items-center justify-between pt-2 text-[11px] font-mono text-gray-400">
+            <span>Quick fill credentials:</span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => fillDemo('IT')}
+                className="text-[#00f0ff] hover:underline cursor-pointer"
+              >
+                [Demo IT]
+              </button>
+              <button
+                type="button"
+                onClick={() => fillDemo('AIDS')}
+                className="text-[#ff9e00] hover:underline cursor-pointer"
+              >
+                [Demo AIDS]
+              </button>
+              <button
+                type="button"
+                onClick={() => fillDemo('CSBS')}
+                className="text-[#c084fc] hover:underline cursor-pointer"
+              >
+                [Demo CSBS]
+              </button>
+            </div>
           </div>
 
           {/* Action Buttons */}
