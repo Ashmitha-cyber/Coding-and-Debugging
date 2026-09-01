@@ -355,22 +355,28 @@ class ParticipantStore {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Cache-Control': 'no-cache'
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache'
         },
         body: JSON.stringify({ localParticipants })
       });
 
       if (res.ok) {
         const data = await res.json();
-        if (data.success && Array.isArray(data.participants)) {
-          const tombstones = getDeletedTombstones();
-          const cleanServerList = data.participants.filter((p: ParticipantRecord) => {
-            const reg = (p.registerNumber || '').toUpperCase().trim();
-            const id = (p.id || '').toUpperCase().trim();
-            return (!reg || !tombstones.has(reg)) && (!id || !tombstones.has(id));
-          });
-          this.setLocalCache(cleanServerList);
-          return cleanServerList;
+        if (data.success) {
+          if (Array.isArray(data.deletedIds)) {
+            data.deletedIds.forEach((id: string) => addDeletedTombstone(id));
+          }
+          if (Array.isArray(data.participants)) {
+            const tombstones = getDeletedTombstones();
+            const cleanServerList = data.participants.filter((p: ParticipantRecord) => {
+              const reg = (p.registerNumber || '').toUpperCase().trim();
+              const id = (p.id || '').toUpperCase().trim();
+              return (!reg || !tombstones.has(reg)) && (!id || !tombstones.has(id));
+            });
+            this.setLocalCache(cleanServerList);
+            return cleanServerList;
+          }
         }
       }
     } catch (e) {
@@ -383,8 +389,6 @@ class ParticipantStore {
 
   // Fetch all participants from BOTH Firestore and Central Server, merging seamlessly
   async fetchAllParticipants(): Promise<ParticipantRecord[]> {
-    const tombstones = getDeletedTombstones();
-
     let serverList: ParticipantRecord[] | null = null;
     try {
       const res = await fetch('/api/participants', {
@@ -395,12 +399,18 @@ class ParticipantStore {
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.success && Array.isArray(data.participants)) {
-          serverList = data.participants.filter((p: ParticipantRecord) => {
-            const reg = (p.registerNumber || '').toUpperCase().trim();
-            const id = (p.id || '').toUpperCase().trim();
-            return (!reg || !tombstones.has(reg)) && (!id || !tombstones.has(id));
-          });
+        if (data.success) {
+          if (Array.isArray(data.deletedIds)) {
+            data.deletedIds.forEach((id: string) => addDeletedTombstone(id));
+          }
+          if (Array.isArray(data.participants)) {
+            const tombstones = getDeletedTombstones();
+            serverList = data.participants.filter((p: ParticipantRecord) => {
+              const reg = (p.registerNumber || '').toUpperCase().trim();
+              const id = (p.id || '').toUpperCase().trim();
+              return (!reg || !tombstones.has(reg)) && (!id || !tombstones.has(id));
+            });
+          }
         }
       }
     } catch (e) {
@@ -630,14 +640,19 @@ class ParticipantStore {
         });
         if (res.ok) {
           const data = await res.json();
-          if (data.success && Array.isArray(data.participants)) {
-            const tombstones = getDeletedTombstones();
-            const cleanServer = data.participants.filter((p: ParticipantRecord) => {
-              const r = (p.registerNumber || '').toUpperCase().trim();
-              const i = (p.id || '').toUpperCase().trim();
-              return (!r || !tombstones.has(r)) && (!i || !tombstones.has(i));
-            });
-            this.setLocalCache(cleanServer);
+          if (data.success) {
+            if (Array.isArray(data.deletedIds)) {
+              data.deletedIds.forEach((id: string) => addDeletedTombstone(id));
+            }
+            if (Array.isArray(data.participants)) {
+              const tombstones = getDeletedTombstones();
+              const cleanServer = data.participants.filter((p: ParticipantRecord) => {
+                const r = (p.registerNumber || '').toUpperCase().trim();
+                const i = (p.id || '').toUpperCase().trim();
+                return (!r || !tombstones.has(r)) && (!i || !tombstones.has(i));
+              });
+              this.setLocalCache(cleanServer);
+            }
           }
         }
       } catch (e) {
@@ -687,8 +702,11 @@ class ParticipantStore {
         });
         if (res.ok) {
           const data = await res.json();
-          if (data.success && Array.isArray(data.participants)) {
-            this.setLocalCache(data.participants);
+          if (data.success) {
+            if (Array.isArray(data.deletedIds)) {
+              data.deletedIds.forEach((id: string) => addDeletedTombstone(id));
+            }
+            this.setLocalCache([]);
           }
         }
       } catch (e) {
@@ -814,13 +832,28 @@ class ParticipantStore {
       try {
         const res = await fetch('/api/participants/clear-dept', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache'
+          },
           body: JSON.stringify({ department })
         });
         if (res.ok) {
           const data = await res.json();
-          if (data.success && Array.isArray(data.participants)) {
-            this.setLocalCache(data.participants);
+          if (data.success) {
+            if (Array.isArray(data.deletedIds)) {
+              data.deletedIds.forEach((id: string) => addDeletedTombstone(id));
+            }
+            if (Array.isArray(data.participants)) {
+              const tombstones = getDeletedTombstones();
+              const clean = data.participants.filter((p: ParticipantRecord) => {
+                const r = (p.registerNumber || '').toUpperCase().trim();
+                const i = (p.id || '').toUpperCase().trim();
+                return (!r || !tombstones.has(r)) && (!i || !tombstones.has(i));
+              });
+              this.setLocalCache(clean);
+            }
           }
         }
       } catch (e) {
@@ -883,7 +916,7 @@ class ParticipantStore {
   }
 
   // Start periodic polling
-  startPolling(intervalMs: number = 2500): () => void {
+  startPolling(intervalMs: number = 2000): () => void {
     this.fetchAllParticipants();
     this.fetchConclusions();
 
@@ -896,10 +929,24 @@ class ParticipantStore {
       this.fetchConclusions();
     }, intervalMs);
 
+    const handleFocus = () => {
+      this.fetchAllParticipants();
+      this.fetchConclusions();
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', handleFocus);
+      window.addEventListener('visibilitychange', handleFocus);
+    }
+
     return () => {
       if (this.pollingInterval) {
         clearInterval(this.pollingInterval);
         this.pollingInterval = null;
+      }
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', handleFocus);
+        window.removeEventListener('visibilitychange', handleFocus);
       }
       if (this.firestoreParticipantsUnsub) {
         try {
