@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { GamePhase, QuestionAnswerState, RoundResult, ParticipantInfo, Department, Question, ParticipantRecord } from './types';
-import { LEVEL_CONFIGS, QUESTIONS } from './data/questions';
+import { LEVEL_CONFIGS } from './data/questions';
 import { questionStore } from './utils/questionStore';
 import { participantStore } from './utils/participantStore';
 import { shuffleArray } from './utils/shuffle';
@@ -200,8 +200,11 @@ export default function App() {
 
     soundManager.playSuccess();
 
-    // Always navigate to ROUND_RESULTS first so candidates see the full question & answer explanations for that round
-    setPhase('ROUND_RESULTS');
+    if (currentRound < 3) {
+      setPhase('ROUND_RESULTS');
+    } else {
+      setPhase('FINAL_RESULTS');
+    }
   }, [currentRound, allQuestions, answers, timeLeft, tabSwitches, syncParticipantRecord]);
 
   // Urgency Timer Countdown during COMPETITION phase
@@ -457,8 +460,6 @@ export default function App() {
         <FinalResults
           roundResults={roundResults}
           participant={participant}
-          answers={answers}
-          questions={QUESTIONS}
           onRestart={handleRestartExpedition}
         />
       )}

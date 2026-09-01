@@ -950,7 +950,7 @@ print(search_pulsar(frequencies, 412.9))`,
     memoryLimit: '128MB',
     timeLimit: '1000ms',
     seqId: '7D-ALPHA',
-    explanation: 'In standard binary search, when freqs[mid] < target, the search window must eliminate mid by advancing "low = mid + 1". Setting "low = mid" causes an infinite loop whenever low + 1 == high because mid evaluates to low repeatedly.'
+    explanation: 'Changed low = mid to low = mid + 1 in binary search.'
   },
   {
     id: 32,
@@ -984,7 +984,7 @@ for alert, prio in alerts:
     memoryLimit: '128MB',
     timeLimit: '1000ms',
     seqId: '7D-BETA',
-    explanation: 'Urgent alerts are ordered in ascending rank (Priority 1 before Priority 3). The broken code specified reverse=True which placed lower-priority alerts first. Removing reverse=True sorts in ascending order.'
+    explanation: 'Removed reverse=True to sort in ascending order.'
   },
   {
     id: 33,
@@ -1018,7 +1018,7 @@ print(transposed)`,
     memoryLimit: '128MB',
     timeLimit: '1000ms',
     seqId: '7D-GAMMA',
-    explanation: 'To transpose an M×N matrix into N×M, iterate outer index i through range(len(matrix[0])) and extract row[i] for each row in matrix: [[row[i] for row in matrix] for i in range(len(matrix[0]))] or use list(zip(*matrix)).'
+    explanation: 'Transposed 2D array using [[row[i] for row in matrix] for i in range(len(matrix[0]))] or zip(*matrix).'
   },
   {
     id: 34,
@@ -1048,7 +1048,7 @@ print(is_valid_quantum_key("11100000"))`,
     memoryLimit: '128MB',
     timeLimit: '1000ms',
     seqId: '7D-DELTA',
-    explanation: 'Even parity requires the count of "1" bits to be divisible by 2 (ones_count % 2 == 0). The buggy condition returned ones_count % 2 != 0, checking for odd parity instead of even parity.'
+    explanation: 'Changed parity check to ones_count % 2 == 0 (5 ones in "11010011" is odd -> False, 3 ones in "11100000" is odd -> False).'
   },
   {
     id: 35,
@@ -1085,7 +1085,7 @@ print(has_cycle(["GATE_A", "GATE_B", "GATE_C"]))`,
     memoryLimit: '128MB',
     timeLimit: '1000ms',
     seqId: '7D-EPSILON',
-    explanation: 'Cycle detection requires recording each visited node into the set with visited.add(node). Without recording, the lookup "if node in visited" never evaluates to True.'
+    explanation: 'Added visited.add(node) inside the loop.'
   },
   {
     id: 36,
@@ -1127,7 +1127,7 @@ print(f"Tree Depth: {max_depth(tree)}")`,
     memoryLimit: '128MB',
     timeLimit: '1000ms',
     seqId: '7D-ZETA',
-    explanation: 'The maximum depth of a binary tree is 1 + max(left_depth, right_depth). The buggy code used min(), which ignored the deeper right subtree branch. Changed min() to max().'
+    explanation: 'Changed min() to max() for depth computation.'
   },
   {
     id: 37,
@@ -1165,7 +1165,7 @@ print(f"Max 3-Burst Energy: {max_sum}")`,
     memoryLimit: '128MB',
     timeLimit: '1000ms',
     seqId: '7D-ETA',
-    explanation: 'Evaluated each 3-element contiguous window: [10,40,20]=70, [40,20,80]=140, [20,80,50]=150, [80,50,30]=160. The peak burst energy is 160.'
+    explanation: 'Evaluated each k-window sum (20+80+50 = 150, 80+50+30 = 160).'
   },
   {
     id: 38,
@@ -1204,7 +1204,7 @@ print(decode_rle("3A2B4C"))`,
     memoryLimit: '128MB',
     timeLimit: '1000ms',
     seqId: '7D-THETA',
-    explanation: 'In Run-Length Decoding, the multiplier at encoded[i] must be parsed as an integer (int(encoded[i])) so string multiplication char * count expands "3" * "A" into "AAA".'
+    explanation: 'Converted encoded[i] to integer count.'
   },
   {
     id: 39,
@@ -1248,7 +1248,7 @@ print(cache)`,
     memoryLimit: '128MB',
     timeLimit: '1000ms',
     seqId: '7D-IOTA',
-    explanation: 'In an LRU queue where recent items are appended to the tail, the least recently used element is at index 0. Calling cache.pop() evicts the newest element at the end; changed to cache.pop(0).'
+    explanation: 'Evicted oldest element at index 0 with cache.pop(0).'
   },
   {
     id: 40,
@@ -1292,7 +1292,7 @@ print(f"LCS Length: {lcs('ABCDE', 'ACE')}")`,
     memoryLimit: '128MB',
     timeLimit: '1000ms',
     seqId: '7D-KAPPA',
-    explanation: 'Creating a 2D array via [[0]*(n+1)] * (m+1) duplicates references to the exact same inner list, causing updates in one row to modify all rows. Fixed using list comprehension [[0]*(n+1) for _ in range(m+1)].'
+    explanation: 'Initialized DP matrix using independent list comprehension [[0]*(n+1) for _ in range(m+1)].'
   },
   {
     id: 41,
@@ -1321,7 +1321,7 @@ print(f"Min Fuel Required: {total_min_fuel} kg")`,
     memoryLimit: '128MB',
     timeLimit: '1000ms',
     seqId: '7D-LAMBDA',
-    explanation: 'The greedy choice selects min(opt1, opt2) for every waypoint step: min(5,8)=5 + min(12,9)=9 + min(7,4)=4 = 18 kg total.'
+    explanation: 'Accumulated minimum of each choice (5 + 9 + 4 = 18).'
   },
   {
     id: 42,
@@ -1349,7 +1349,7 @@ print(f"Checksum: {hex(checksum)}")`,
     memoryLimit: '128MB',
     timeLimit: '1000ms',
     seqId: '7D-MU',
-    explanation: 'A bitwise XOR checksum requires using the "^" operator (0x41 ^ 0x52 ^ 0x4B = 0x58). The buggy code mistakenly used arithmetic addition "+".'
+    explanation: 'Used bitwise XOR (^) to compute checksum.'
   },
   {
     id: 43,
@@ -1385,7 +1385,7 @@ print(f"Distance: {round(dist, 2)} km")`,
     memoryLimit: '128MB',
     timeLimit: '1000ms',
     seqId: '7D-NU',
-    explanation: 'The 3D Euclidean distance is sqrt((14-10)^2 + (23-20)^2 + (42-30)^2) = sqrt(16 + 9 + 144) = sqrt(169) = 13.0 km.'
+    explanation: 'Computed Euclidean distance sqrt(4^2 + 3^2 + 12^2) = sqrt(169) = 13.0.'
   },
   {
     id: 44,
@@ -1413,7 +1413,7 @@ print(f"Shield Key: {result}")`,
     memoryLimit: '128MB',
     timeLimit: '1000ms',
     seqId: '7D-XI',
-    explanation: 'Python pow(base, exp, mod) takes the exponent second and modulus third. Swapping the arguments to pow(7, 13, 19) calculates (7**13) % 19 = 11.'
+    explanation: 'Corrected parameter order to pow(base, exp, mod).'
   },
   {
     id: 45,
@@ -1453,6 +1453,6 @@ print(f"Docking Ignition Authorized: {can_ignite(subsystems)}")`,
     memoryLimit: '128MB',
     timeLimit: '1000ms',
     seqId: '7D-OMEGA',
-    explanation: 'Docking ignition requires all subsystems to be "READY". Changed "ion_drives" from "STANDBY" to "READY" and used all() rather than any().'
+    explanation: 'Updated ion_drives to "READY" and used all() to verify every subsystem.'
   }
 ];
