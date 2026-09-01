@@ -1,0 +1,81 @@
+{
+  "entities": {
+    "ParticipantRecord": {
+      "title": "Participant Record",
+      "description": "Information and scores for a registered competition participant/team across all lab PCs",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique participant identifier" },
+        "name": { "type": "string", "description": "Lead participant name", "maxLength": 100 },
+        "registerNumber": { "type": "string", "description": "Institutional register number", "maxLength": 50 },
+        "year": { "type": "string", "description": "Academic year of study", "enum": ["II", "III", "IV"] },
+        "department": { "type": "string", "description": "Department track", "enum": ["IT", "AIDS", "CSBS"] },
+        "teamName": { "type": "string", "description": "Optional duo team name", "maxLength": 100 },
+        "partnerName": { "type": "string", "description": "Optional partner name", "maxLength": 100 },
+        "partnerRegisterNumber": { "type": "string", "description": "Optional partner register number", "maxLength": 50 },
+        "round1Score": { "type": "number", "description": "Round 1 score" },
+        "round2Score": { "type": "number", "description": "Round 2 score" },
+        "round3Score": { "type": "number", "description": "Round 3 score" },
+        "totalScore": { "type": "number", "description": "Total aggregated score" },
+        "accuracy": { "type": "string", "description": "Overall accuracy percentage" },
+        "timeUsed": { "type": "string", "description": "Formatted time used" },
+        "timeUsedSeconds": { "type": "number", "description": "Total time taken in seconds" },
+        "tabViolations": { "type": "number", "description": "Number of recorded tab switches" },
+        "status": { "type": "string", "description": "Current status", "enum": ["Active", "Completed", "Disqualified"] },
+        "finishingStatus": { "type": "string", "description": "Human readable finish text" },
+        "qualifiedForRound2": { "type": "boolean", "description": "Whether candidate advanced past Round 1" },
+        "resultStatus": { "type": "string", "description": "Qualification or placement status" },
+        "registeredAt": { "type": "string", "description": "ISO timestamp of initial registration" },
+        "updatedAt": { "type": "string", "description": "ISO timestamp of last update" }
+      },
+      "required": ["name", "registerNumber", "department", "year"]
+    },
+    "SystemConclusions": {
+      "title": "System Conclusions",
+      "description": "State tracking for department and global competition round completions",
+      "type": "object",
+      "properties": {
+        "IT": { "type": "boolean", "description": "Whether IT department round 1 is concluded" },
+        "AIDS": { "type": "boolean", "description": "Whether AI&DS department round 1 is concluded" },
+        "CSBS": { "type": "boolean", "description": "Whether CSBS department round 1 is concluded" },
+        "global": { "type": "boolean", "description": "Whether global round 1 is concluded across all departments" }
+      }
+    },
+    "CustomQuestion": {
+      "title": "Custom Question",
+      "description": "Administrator custom or updated coding/debugging challenge question",
+      "type": "object",
+      "properties": {
+        "id": { "type": "number", "description": "Unique numeric question id" },
+        "round": { "type": "number", "description": "Target round 1, 2, or 3" },
+        "title": { "type": "string", "description": "Question title", "maxLength": 200 },
+        "description": { "type": "string", "description": "Question problem description" },
+        "category": { "type": "string", "description": "Challenge category", "maxLength": 100 },
+        "language": { "type": "string", "description": "Programming language", "maxLength": 50 },
+        "brokenCode": { "type": "string", "description": "Buggy source code snippet" },
+        "expectedAnswer": { "type": "string", "description": "Expected corrected code" },
+        "expectedOutput": { "type": "string", "description": "Target console output" },
+        "explanation": { "type": "string", "description": "Detailed explanation of bug and fix" },
+        "questionNumber": { "type": "number", "description": "Index within the round" },
+        "timeLimit": { "type": "string", "description": "Execution time limit" },
+        "memoryLimit": { "type": "string", "description": "Memory limit" },
+        "seqId": { "type": "string", "description": "Challenge sequence code" }
+      },
+      "required": ["round", "title", "description", "brokenCode", "expectedAnswer"]
+    }
+  },
+  "firestore": {
+    "/participants/{participantId}": {
+      "schema": "ParticipantRecord",
+      "description": "Collection of all student participants and teams registered from any lab PC"
+    },
+    "/system_state/conclusions": {
+      "schema": "SystemConclusions",
+      "description": "Singleton state tracking round conclusion and qualification cutoff events"
+    },
+    "/custom_questions/{questionId}": {
+      "schema": "CustomQuestion",
+      "description": "Administrator question bank customization synced across all workstations"
+    }
+  }
+}
