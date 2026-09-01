@@ -10,7 +10,7 @@ export const LEVEL_CONFIGS: Record<1 | 2 | 3, LevelInfo> = {
     description: 'Detect bugs, identify syntax & runtime errors, and prove your debugging fundamentals.',
     objective: 'Eliminate 15 fundamental bugs across syntax, indentation, and conditional statements to stabilize the core arena compiler.',
     totalQuestions: 15,
-    timeLimitSeconds: 900, // 15 minutes
+    timeLimitSeconds: 1200, // 20 minutes
     levelCode: 'LVL-01-SCAN'
   },
   2: {
@@ -22,7 +22,7 @@ export const LEVEL_CONFIGS: Record<1 | 2 | 3, LevelInfo> = {
     description: 'Repair broken programs, understand complex logic, and eliminate hidden bugs.',
     objective: 'Reconstruct broken data transformations, recursive routines, dictionary mappings, and sorting algorithms under time pressure.',
     totalQuestions: 15,
-    timeLimitSeconds: 900,
+    timeLimitSeconds: 1200, // 20 minutes
     levelCode: 'LVL-02-REPAIR'
   },
   3: {
@@ -34,7 +34,7 @@ export const LEVEL_CONFIGS: Record<1 | 2 | 3, LevelInfo> = {
     description: 'Face the hardest debugging challenges and conquer the final arena.',
     objective: 'Tackle advanced algorithms, binary search boundaries, deep cycle detectors, dynamic programming memoization, and complex edge cases.',
     totalQuestions: 15,
-    timeLimitSeconds: 900,
+    timeLimitSeconds: 1200, // 20 minutes
     levelCode: 'LVL-03-BOSS'
   }
 };

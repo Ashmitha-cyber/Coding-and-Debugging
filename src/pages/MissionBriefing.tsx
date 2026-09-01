@@ -75,7 +75,7 @@ export const MissionBriefing: React.FC<MissionBriefingProps> = ({
           </div>
           <div className="bg-[#050c1f] p-4 rounded-xl border border-[#00f0ff]/20">
             <div className="text-[10px] font-mono text-gray-400 uppercase">Time Limit</div>
-            <div className="text-2xl font-bold font-mono text-[#00f0ff] mt-1">15 Mins</div>
+            <div className="text-2xl font-bold font-mono text-[#00f0ff] mt-1">{Math.floor(level.timeLimitSeconds / 60)} Mins</div>
           </div>
           <div className="bg-[#050c1f] p-4 rounded-xl border border-[#00f0ff]/20">
             <div className="text-[10px] font-mono text-gray-400 uppercase">Evaluation</div>

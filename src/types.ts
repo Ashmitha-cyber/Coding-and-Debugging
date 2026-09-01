@@ -56,7 +56,7 @@ export interface LevelInfo {
   description: string;
   objective: string;
   totalQuestions: number;
-  timeLimitSeconds: number; // 900 = 15 mins
+  timeLimitSeconds: number; // 1200 = 20 mins
   levelCode: string;
 }
 

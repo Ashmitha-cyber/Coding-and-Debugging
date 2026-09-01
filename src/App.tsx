@@ -18,7 +18,7 @@ import { CyberBackground } from './components/CyberBackground';
 import { validateAnswer } from './utils/answerValidator';
 import { soundManager } from './utils/audio';
 
-const ROUND_TIME_LIMIT = 900; // 15 minutes in seconds
+const ROUND_TIME_LIMIT = 1200; // 20 minutes in seconds
 
 export default function App() {
   // Navigation & Arena State
@@ -458,11 +458,13 @@ export default function App() {
               totalQuestions: 15,
               accuracy: 0,
               timeRemainingSeconds: 0,
-              timeUsedSeconds: 900,
+              timeUsedSeconds: 1200,
               tabSwitches: 0,
               completedAt: new Date().toISOString()
             }
           }
+          questions={roundQuestions}
+          answers={answers}
           participant={participant}
           onContinue={handleContinueNextRound}
           onViewFinalTelemetry={() => setPhase('FINAL_RESULTS')}

@@ -47,15 +47,15 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose }) => {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 font-mono text-xs">
               <div className="p-3 rounded-lg bg-[#00f0ff]/10 border border-[#00f0ff]/30">
                 <div className="text-[#00f0ff] font-bold">LEVEL 01: BUG SCAN</div>
-                <div className="text-gray-400 text-[11px] mt-1">15 Questions · Syntax & Fundamentals · 15 Mins</div>
+                <div className="text-gray-400 text-[11px] mt-1">15 Questions · Syntax & Fundamentals · 20 Mins</div>
               </div>
               <div className="p-3 rounded-lg bg-[#ff9e00]/10 border border-[#ff9e00]/30">
                 <div className="text-[#ff9e00] font-bold">LEVEL 02: CODE REPAIR</div>
-                <div className="text-gray-400 text-[11px] mt-1">15 Questions · Logic & Reconstruction · 15 Mins</div>
+                <div className="text-gray-400 text-[11px] mt-1">15 Questions · Logic & Reconstruction · 20 Mins</div>
               </div>
               <div className="p-3 rounded-lg bg-[#a855f7]/10 border border-[#a855f7]/30">
                 <div className="text-[#c084fc] font-bold">LEVEL 03: BOSS ARENA</div>
-                <div className="text-gray-400 text-[11px] mt-1">15 Questions · Master Edge Cases · 15 Mins</div>
+                <div className="text-gray-400 text-[11px] mt-1">15 Questions · Master Edge Cases · 20 Mins</div>
               </div>
             </div>
           </div>
@@ -94,7 +94,7 @@ export const RulesModal: React.FC<RulesModalProps> = ({ isOpen, onClose }) => {
               <Clock className="w-4 h-4 text-[#00f0ff]" /> 04. TIMING & SCORING METRICS
             </h3>
             <p className="text-xs text-gray-300 leading-relaxed">
-              Each round provides a strict 15-minute countdown clock. The final ranking is determined by total test cases resolved, accuracy percentage, and lowest elapsed execution time.
+              Each round provides a strict 20-minute countdown clock. The final ranking is determined by total test cases resolved, accuracy percentage, and lowest elapsed execution time.
             </p>
           </div>
 
