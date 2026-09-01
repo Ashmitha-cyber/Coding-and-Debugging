@@ -4,6 +4,7 @@ import {
   collection,
   doc,
   setDoc,
+  getDocs,
   deleteDoc,
   writeBatch,
   onSnapshot,
@@ -61,7 +62,7 @@ class ParticipantStore {
     this.firestoreDisabled = true;
     this.firestoreConnected = false;
     if (reason) {
-      console.warn(`[ParticipantStore] Firestore real-time listener suspended (${reason}). Seamlessly operating via central Express backend & local cache.`);
+      console.warn(`[ParticipantStore] Firestore real-time listener suspended (${reason}). Operating via central Express backend & local cache.`);
     }
     if (this.firestoreParticipantsUnsub) {
       try {
@@ -86,7 +87,7 @@ class ParticipantStore {
         return;
       }
 
-      // 1. Live Real-time listener for all participants across all computers
+      // 1. Live Real-time listener for all participants across all workstations
       const participantsCol = collection(db, 'participants');
       this.firestoreParticipantsUnsub = onSnapshot(
         participantsCol,
@@ -95,7 +96,7 @@ class ParticipantStore {
           const firestoreList: ParticipantRecord[] = [];
           snapshot.forEach((docSnap) => {
             const data = docSnap.data() as ParticipantRecord;
-            if (data && data.registerNumber) {
+            if (data && (data.registerNumber || data.id)) {
               firestoreList.push(data);
             }
           });
@@ -104,10 +105,26 @@ class ParticipantStore {
             // Merge with local cache & update
             const cached = this.getCachedParticipants();
             const map = new Map<string, ParticipantRecord>();
-            cached.forEach((p) => map.set(p.registerNumber.toUpperCase(), p));
-            firestoreList.forEach((p) => map.set(p.registerNumber.toUpperCase(), p));
+            cached.forEach((p) => {
+              const k = (p.registerNumber || p.id || '').toUpperCase().trim();
+              if (k) map.set(k, p);
+            });
+            firestoreList.forEach((p) => {
+              const k = (p.registerNumber || p.id || '').toUpperCase().trim();
+              if (k) {
+                const ex = map.get(k);
+                map.set(k, ex ? { ...ex, ...p } : p);
+              }
+            });
             const merged = Array.from(map.values());
             this.setLocalCache(merged);
+
+            // Sync to central Express backend in background so local JSON file is also in sync
+            fetch('/api/participants/sync', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ localParticipants: merged })
+            }).catch(() => {});
           }
         },
         (error) => {
@@ -224,7 +241,7 @@ class ParticipantStore {
     } catch (e) {}
   }
 
-  // Full bidirectional sync: uploads this PC's local cache & downloads all other PCs' candidates
+  // Full bidirectional sync: merges local cache + server + firestore
   async syncWithServer(): Promise<ParticipantRecord[]> {
     if (this.isSyncing) {
       return this.getCachedParticipants();
@@ -232,7 +249,6 @@ class ParticipantStore {
 
     this.isSyncing = true;
     try {
-      // Server API sync (persisted to server file data/participants.json)
       const localParticipants = this.getCachedParticipants();
       const res = await fetch('/api/participants/sync', {
         method: 'POST',
@@ -246,8 +262,21 @@ class ParticipantStore {
       if (res.ok) {
         const data = await res.json();
         if (data.success && Array.isArray(data.participants)) {
-          this.setLocalCache(data.participants);
-          return data.participants;
+          const map = new Map<string, ParticipantRecord>();
+          localParticipants.forEach((p) => {
+            const k = (p.registerNumber || p.id || '').toUpperCase().trim();
+            if (k) map.set(k, p);
+          });
+          data.participants.forEach((p: ParticipantRecord) => {
+            const k = (p.registerNumber || p.id || '').toUpperCase().trim();
+            if (k) {
+              const ex = map.get(k);
+              map.set(k, ex ? { ...ex, ...p } : p);
+            }
+          });
+          const merged = Array.from(map.values());
+          this.setLocalCache(merged);
+          return merged;
         }
       }
     } catch (e) {
@@ -258,8 +287,36 @@ class ParticipantStore {
     return this.getCachedParticipants();
   }
 
-  // Fetch all participants directly from central server (accessible by any PC / Admin panel)
+  // Fetch all participants from BOTH Firestore and Central Server, merging seamlessly
   async fetchAllParticipants(): Promise<ParticipantRecord[]> {
+    const cached = this.getCachedParticipants();
+    const map = new Map<string, ParticipantRecord>();
+    cached.forEach((p) => {
+      const k = (p.registerNumber || p.id || '').toUpperCase().trim();
+      if (k) map.set(k, p);
+    });
+
+    let firestoreList: ParticipantRecord[] = [];
+    if (db && !this.firestoreDisabled) {
+      try {
+        const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500));
+        const firestorePromise = getDocs(collection(db, 'participants'));
+        const snap = await Promise.race([firestorePromise, timeoutPromise]);
+        if (snap && 'docs' in snap) {
+          this.firestoreConnected = true;
+          snap.docs.forEach((docSnap) => {
+            const data = docSnap.data() as ParticipantRecord;
+            if (data && (data.registerNumber || data.id)) {
+              firestoreList.push(data);
+            }
+          });
+        }
+      } catch (err: any) {
+        console.warn('Firestore direct getDocs notice:', err?.message);
+      }
+    }
+
+    let serverList: ParticipantRecord[] = [];
     try {
       const res = await fetch('/api/participants', {
         headers: {
@@ -270,17 +327,37 @@ class ParticipantStore {
       if (res.ok) {
         const data = await res.json();
         if (data.success && Array.isArray(data.participants)) {
-          this.setLocalCache(data.participants);
-          return data.participants;
+          serverList = data.participants;
         }
       }
     } catch (e) {
-      console.warn('Direct fetch from /api/participants failed, attempting sync', e);
+      console.warn('Server fetch notice:', e);
     }
-    return this.syncWithServer();
+
+    // Merge server list
+    serverList.forEach((p) => {
+      const k = (p.registerNumber || p.id || '').toUpperCase().trim();
+      if (k) {
+        const ex = map.get(k);
+        map.set(k, ex ? { ...ex, ...p } : p);
+      }
+    });
+
+    // Merge firestore list
+    firestoreList.forEach((p) => {
+      const k = (p.registerNumber || p.id || '').toUpperCase().trim();
+      if (k) {
+        const ex = map.get(k);
+        map.set(k, ex ? { ...ex, ...p } : p);
+      }
+    });
+
+    const merged = Array.from(map.values());
+    this.setLocalCache(merged);
+    return merged;
   }
 
-  // Fetch conclusions state from server
+  // Fetch conclusions state from server & Firestore
   async fetchConclusions(): Promise<ConclusionsState> {
     try {
       const res = await fetch('/api/conclusions', {
@@ -305,36 +382,36 @@ class ParticipantStore {
     return this.getCachedConclusions();
   }
 
-  // Register or Update a participant record (Writes to Local Cache + Central Server + Firestore if active)
+  // Register or Update a participant record (Writes to Local Cache + Central Server + Firestore in parallel)
   async registerOrUpdate(record: Partial<ParticipantRecord> & { registerNumber: string }): Promise<ParticipantRecord> {
-    // 1. Update local cache immediately for instant UI response
-    const cached = this.getCachedParticipants();
     const regNo = record.registerNumber.toUpperCase().trim();
+    const cached = this.getCachedParticipants();
     const existingIndex = cached.findIndex(
       (p) => (p.registerNumber && p.registerNumber.toUpperCase() === regNo) || (record.id && p.id === record.id)
     );
 
-    let updatedList: ParticipantRecord[];
     let targetRecord: ParticipantRecord;
+    let updatedList: ParticipantRecord[];
 
     if (existingIndex >= 0) {
       targetRecord = {
         ...cached[existingIndex],
         ...record,
-        registerNumber: regNo
+        registerNumber: regNo,
+        updatedAt: new Date().toISOString()
       };
       updatedList = [...cached];
       updatedList[existingIndex] = targetRecord;
     } else {
       targetRecord = {
         id: record.id || `P-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        name: record.name || 'Anonymous Candidate',
+        name: record.name || 'Candidate',
         registerNumber: regNo,
         year: record.year || 'III',
         department: record.department || 'IT',
         teamName: record.teamName,
         partnerName: record.partnerName,
-        partnerRegisterNumber: record.partnerRegisterNumber,
+        partnerRegisterNumber: record.partnerRegisterNumber ? record.partnerRegisterNumber.toUpperCase().trim() : undefined,
         round1Score: record.round1Score ?? 0,
         round2Score: record.round2Score ?? 0,
         round3Score: record.round3Score ?? 0,
@@ -351,41 +428,57 @@ class ParticipantStore {
       updatedList = [targetRecord, ...cached];
     }
 
+    // 1. Immediate local cache update for snappy UI
     this.setLocalCache(updatedList);
 
-    // 2. Broadcast to Central Server API (Reliable server persistence)
-    try {
-      const res = await fetch('/api/participants', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(targetRecord)
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && Array.isArray(data.participants)) {
-          this.setLocalCache(data.participants);
-        }
-      }
-    } catch (e) {
-      console.warn('Server API sync notice:', e);
-    }
+    // 2. Parallel Dual Sync to Central Server API + Firestore
+    const cleanData = sanitizeForFirestore(targetRecord);
+    const docId = safeDocId(targetRecord.registerNumber, targetRecord.id);
 
-    // 3. Write to Firestore if connected and not exhausted
-    if (db && !this.firestoreDisabled) {
-      try {
-        const docId = safeDocId(targetRecord.registerNumber, targetRecord.id);
-        const cleanData = sanitizeForFirestore(targetRecord);
-        setDoc(doc(db, 'participants', docId), cleanData, { merge: true }).catch((err) => {
+    const firestorePromise = (async () => {
+      if (db && !this.firestoreDisabled) {
+        try {
+          await setDoc(doc(db, 'participants', docId), cleanData, { merge: true });
+        } catch (err: any) {
           const msg = err?.message || '';
           if (err?.code === 'resource-exhausted' || msg.includes('Quota') || msg.includes('quota')) {
             this.disableFirestore('quota reached on write');
           }
-        });
-      } catch (err: any) {
-        this.disableFirestore(err?.message);
+        }
       }
-    }
+    })();
 
+    const serverPromise = (async () => {
+      try {
+        const res = await fetch('/api/participants', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(targetRecord)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.participants)) {
+            const map = new Map<string, ParticipantRecord>();
+            this.getCachedParticipants().forEach((p) => {
+              const k = (p.registerNumber || p.id).toUpperCase().trim();
+              if (k) map.set(k, p);
+            });
+            data.participants.forEach((p: ParticipantRecord) => {
+              const k = (p.registerNumber || p.id).toUpperCase().trim();
+              if (k) {
+                const ex = map.get(k);
+                map.set(k, ex ? { ...ex, ...p } : p);
+              }
+            });
+            this.setLocalCache(Array.from(map.values()));
+          }
+        }
+      } catch (e) {
+        console.warn('Server API sync notice:', e);
+      }
+    })();
+
+    await Promise.allSettled([firestorePromise, serverPromise]);
     return targetRecord;
   }
 
@@ -398,35 +491,40 @@ class ParticipantStore {
     );
     this.setLocalCache(updated);
 
-    try {
-      const res = await fetch(`/api/participants/${encodeURIComponent(upperReg)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates)
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && Array.isArray(data.participants)) {
-          this.setLocalCache(data.participants);
-        }
-      }
-    } catch (e) {
-      console.error('Failed to PUT participant to server', e);
-    }
+    const docId = safeDocId(upperReg);
+    const cleanData = sanitizeForFirestore(updates);
 
-    // Optional Firestore update
-    if (db && !this.firestoreDisabled) {
-      try {
-        const docId = safeDocId(upperReg);
-        const cleanData = sanitizeForFirestore(updates);
-        setDoc(doc(db, 'participants', docId), cleanData, { merge: true }).catch((err) => {
+    const firestorePromise = (async () => {
+      if (db && !this.firestoreDisabled) {
+        try {
+          await setDoc(doc(db, 'participants', docId), cleanData, { merge: true });
+        } catch (err: any) {
           if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota')) {
             this.disableFirestore('quota reached');
           }
-        });
-      } catch (_) {}
-    }
+        }
+      }
+    })();
 
+    const serverPromise = (async () => {
+      try {
+        const res = await fetch(`/api/participants/${encodeURIComponent(upperReg)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updates)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.participants)) {
+            this.setLocalCache(data.participants);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to PUT participant to server', e);
+      }
+    })();
+
+    await Promise.allSettled([firestorePromise, serverPromise]);
     return true;
   }
 
@@ -443,58 +541,79 @@ class ParticipantStore {
     );
     this.setLocalCache(updated);
 
-    try {
-      const res = await fetch(`/api/participants/${encodeURIComponent(rawTarget)}`, {
-        method: 'DELETE',
-        headers: {
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache'
-        }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && Array.isArray(data.participants)) {
-          this.setLocalCache(data.participants);
-        }
+    const firestorePromise = (async () => {
+      if (db && !this.firestoreDisabled) {
+        try {
+          const docId = safeDocId(upperTarget, rawTarget);
+          await deleteDoc(doc(db, 'participants', docId));
+        } catch (_) {}
       }
-    } catch (e) {
-      console.error('Failed to DELETE participant', e);
-    }
+    })();
 
-    // Optional Firestore delete
-    if (db && !this.firestoreDisabled) {
+    const serverPromise = (async () => {
       try {
-        const docId = safeDocId(upperTarget, rawTarget);
-        deleteDoc(doc(db, 'participants', docId)).catch(() => {});
-      } catch (_) {}
-    }
+        const res = await fetch(`/api/participants/${encodeURIComponent(rawTarget)}`, {
+          method: 'DELETE',
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache'
+          }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.participants)) {
+            this.setLocalCache(data.participants);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to DELETE participant', e);
+      }
+    })();
 
+    await Promise.allSettled([firestorePromise, serverPromise]);
     return true;
   }
 
   // Clear all participants across all departments
   async clearAllParticipants(): Promise<boolean> {
+    const cached = this.getCachedParticipants();
     this.setLocalCache([]);
 
-    try {
-      const res = await fetch('/api/participants/clear-all', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache'
-        }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && Array.isArray(data.participants)) {
-          this.setLocalCache(data.participants);
-        }
+    const firestorePromise = (async () => {
+      if (db && !this.firestoreDisabled) {
+        try {
+          const batch = writeBatch(db);
+          cached.slice(0, 100).forEach((p) => {
+            const docId = safeDocId(p.registerNumber, p.id);
+            batch.delete(doc(db, 'participants', docId));
+          });
+          await batch.commit();
+        } catch (_) {}
       }
-    } catch (e) {
-      console.error('Failed to clear all participants', e);
-    }
+    })();
 
+    const serverPromise = (async () => {
+      try {
+        const res = await fetch('/api/participants/clear-all', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache'
+          }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.participants)) {
+            this.setLocalCache(data.participants);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to clear all participants', e);
+      }
+    })();
+
+    await Promise.allSettled([firestorePromise, serverPromise]);
     return true;
   }
 
@@ -502,38 +621,43 @@ class ParticipantStore {
   async saveBulkParticipants(list: ParticipantRecord[]): Promise<boolean> {
     this.setLocalCache(list);
 
-    try {
-      const res = await fetch('/api/participants/bulk', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ list })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && Array.isArray(data.participants)) {
-          this.setLocalCache(data.participants);
-        }
-      }
-    } catch (e) {
-      console.error('Failed to save bulk participants', e);
-    }
-
-    if (db && !this.firestoreDisabled) {
-      try {
-        const batch = writeBatch(db);
-        list.slice(0, 50).forEach((p) => {
-          const docId = safeDocId(p.registerNumber, p.id);
-          const clean = sanitizeForFirestore(p);
-          batch.set(doc(db, 'participants', docId), clean, { merge: true });
-        });
-        batch.commit().catch((err) => {
+    const firestorePromise = (async () => {
+      if (db && !this.firestoreDisabled) {
+        try {
+          const batch = writeBatch(db);
+          list.slice(0, 50).forEach((p) => {
+            const docId = safeDocId(p.registerNumber, p.id);
+            const clean = sanitizeForFirestore(p);
+            batch.set(doc(db, 'participants', docId), clean, { merge: true });
+          });
+          await batch.commit();
+        } catch (err: any) {
           if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota')) {
             this.disableFirestore('quota reached');
           }
-        });
-      } catch (_) {}
-    }
+        }
+      }
+    })();
 
+    const serverPromise = (async () => {
+      try {
+        const res = await fetch('/api/participants/bulk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ list })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.participants)) {
+            this.setLocalCache(data.participants);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to save bulk participants', e);
+      }
+    })();
+
+    await Promise.allSettled([firestorePromise, serverPromise]);
     return true;
   }
 
@@ -541,8 +665,8 @@ class ParticipantStore {
   async importAndMergeParticipants(newRecords: ParticipantRecord[]): Promise<ParticipantRecord[]> {
     const existing = this.getCachedParticipants();
     const map = new Map<string, ParticipantRecord>();
-    existing.forEach((p) => map.set(p.registerNumber.toUpperCase(), p));
-    newRecords.forEach((p) => map.set(p.registerNumber.toUpperCase(), p));
+    existing.forEach((p) => map.set((p.registerNumber || p.id).toUpperCase(), p));
+    newRecords.forEach((p) => map.set((p.registerNumber || p.id).toUpperCase(), p));
     const merged = Array.from(map.values());
 
     this.setLocalCache(merged);
@@ -570,25 +694,42 @@ class ParticipantStore {
   // Clear department participants
   async clearDepartment(department: Department): Promise<boolean> {
     const cached = this.getCachedParticipants();
+    const toDelete = cached.filter((p) => p.department === department);
     const updated = cached.filter((p) => p.department !== department);
     this.setLocalCache(updated);
 
-    try {
-      const res = await fetch('/api/participants/clear-dept', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ department })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && Array.isArray(data.participants)) {
-          this.setLocalCache(data.participants);
-        }
+    const firestorePromise = (async () => {
+      if (db && !this.firestoreDisabled) {
+        try {
+          const batch = writeBatch(db);
+          toDelete.slice(0, 100).forEach((p) => {
+            const docId = safeDocId(p.registerNumber, p.id);
+            batch.delete(doc(db, 'participants', docId));
+          });
+          await batch.commit();
+        } catch (_) {}
       }
-    } catch (e) {
-      console.error('Failed to clear department', e);
-    }
+    })();
 
+    const serverPromise = (async () => {
+      try {
+        const res = await fetch('/api/participants/clear-dept', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ department })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.participants)) {
+            this.setLocalCache(data.participants);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to clear department', e);
+      }
+    })();
+
+    await Promise.allSettled([firestorePromise, serverPromise]);
     return true;
   }
 
@@ -601,46 +742,50 @@ class ParticipantStore {
     };
     this.setConclusionsCache(updated);
 
-    try {
-      const res = await fetch('/api/conclusions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates)
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.conclusions) {
-          const newState: ConclusionsState = {
-            IT: !!data.conclusions.IT,
-            AIDS: !!data.conclusions.AIDS,
-            CSBS: !!data.conclusions.CSBS,
-            global: !!data.conclusions.global
-          };
-          this.setConclusionsCache(newState);
-          return newState;
-        }
-      }
-    } catch (e) {
-      console.error('Failed to save conclusions', e);
-    }
-
-    if (db && !this.firestoreDisabled) {
-      try {
-        const clean = sanitizeForFirestore(updated);
-        setDoc(doc(db, 'system_state', 'conclusions'), clean, { merge: true }).catch((err) => {
+    const firestorePromise = (async () => {
+      if (db && !this.firestoreDisabled) {
+        try {
+          const clean = sanitizeForFirestore(updated);
+          await setDoc(doc(db, 'system_state', 'conclusions'), clean, { merge: true });
+        } catch (err: any) {
           if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota')) {
             this.disableFirestore('quota reached');
           }
-        });
-      } catch (_) {}
-    }
+        }
+      }
+    })();
 
+    const serverPromise = (async () => {
+      try {
+        const res = await fetch('/api/conclusions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updates)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.conclusions) {
+            const newState: ConclusionsState = {
+              IT: !!data.conclusions.IT,
+              AIDS: !!data.conclusions.AIDS,
+              CSBS: !!data.conclusions.CSBS,
+              global: !!data.conclusions.global
+            };
+            this.setConclusionsCache(newState);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to save conclusions', e);
+      }
+    })();
+
+    await Promise.allSettled([firestorePromise, serverPromise]);
     return updated;
   }
 
   // Start periodic polling
-  startPolling(intervalMs: number = 3500): () => void {
-    this.syncWithServer();
+  startPolling(intervalMs: number = 2500): () => void {
+    this.fetchAllParticipants();
     this.fetchConclusions();
 
     if (this.pollingInterval) {
@@ -648,7 +793,7 @@ class ParticipantStore {
     }
 
     this.pollingInterval = setInterval(() => {
-      this.syncWithServer();
+      this.fetchAllParticipants();
       this.fetchConclusions();
     }, intervalMs);
 
@@ -674,3 +819,4 @@ class ParticipantStore {
 }
 
 export const participantStore = new ParticipantStore();
+

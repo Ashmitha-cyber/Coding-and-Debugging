@@ -219,7 +219,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
     soundManager.playBeep(520, 'sine', 0.04);
     try {
       const [syncedList] = await Promise.all([
-        participantStore.syncWithServer(),
+        participantStore.fetchAllParticipants(),
         loadAllConclusions(),
         questionStore.fetchServerQuestions()
       ]);

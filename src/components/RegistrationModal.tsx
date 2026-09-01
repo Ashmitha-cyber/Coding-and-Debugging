@@ -29,7 +29,7 @@ export const RegistrationModal: React.FC<RegistrationModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
       setError('Please enter participant name');
@@ -60,10 +60,10 @@ export const RegistrationModal: React.FC<RegistrationModalProps> = ({
       partnerRegisterNumber: isDuo && partnerRegisterNumber.trim() ? partnerRegisterNumber.trim().toUpperCase() : undefined
     };
 
-    // Store participant in participantStore (updates local cache + syncs to central server)
+    // Store participant in participantStore (updates local cache + dual syncs to Firestore & Central Server)
     try {
       localStorage.setItem('triquetra_current_participant', JSON.stringify(participantData));
-      participantStore.registerOrUpdate({
+      await participantStore.registerOrUpdate({
         ...participantData,
         id: `P-${Date.now()}`,
         registeredAt: new Date().toISOString(),

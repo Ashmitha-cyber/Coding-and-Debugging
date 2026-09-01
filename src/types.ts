@@ -114,6 +114,7 @@ export interface ParticipantRecord {
   resultStatus?: 'Qualified' | 'Not Qualified' | 'Pending' | 'Disqualified';
   finishingStatus?: string; // e.g. "Finished (12m 30s)", "In Progress"
   registeredAt?: string;
+  updatedAt?: string;
   completedAt?: string;
 }
 
