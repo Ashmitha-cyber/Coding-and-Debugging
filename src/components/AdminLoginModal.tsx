@@ -38,6 +38,7 @@ import { soundManager } from '../utils/audio';
 import { Department, YearOfStudy, Question, ParticipantRecord } from '../types';
 import { questionStore } from '../utils/questionStore';
 import { AdminQuestionEditorModal } from './AdminQuestionEditorModal';
+import { AdminParticipantEditorModal } from './AdminParticipantEditorModal';
 
 interface AdminLoginModalProps {
   isOpen: boolean;
@@ -120,6 +121,11 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
   const [questionToEdit, setQuestionToEdit] = useState<Question | null>(null);
   const [expandedQuestionId, setExpandedQuestionId] = useState<number | null>(null);
 
+  // Participant Editor State (Add / Edit full candidate details)
+  const [isParticipantEditorOpen, setIsParticipantEditorOpen] = useState(false);
+  const [participantToEdit, setParticipantToEdit] = useState<ParticipantRecord | null>(null);
+  const [editorDefaultDept, setEditorDefaultDept] = useState<Department>('IT');
+
   // Load data unconditionally on mount / state change
   useEffect(() => {
     if (isOpen && isAuthenticated) {
@@ -185,6 +191,43 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
   const showNotice = (msg: string) => {
     setNotification(msg);
     setTimeout(() => setNotification(null), 3500);
+  };
+
+  // Open Participant Editor to register a new candidate/team
+  const handleOpenAddParticipant = (dept?: Department) => {
+    setParticipantToEdit(null);
+    setEditorDefaultDept(dept || (activeTab.startsWith('DEPT_') ? (activeTab.replace('DEPT_', '') as Department) : 'IT'));
+    setIsParticipantEditorOpen(true);
+    soundManager.playBeep(520, 'sine', 0.03);
+  };
+
+  // Open Participant Editor to modify an existing candidate/team
+  const handleOpenEditParticipant = (p: ParticipantRecord) => {
+    setParticipantToEdit(p);
+    setEditorDefaultDept(p.department);
+    setIsParticipantEditorOpen(true);
+    soundManager.playBeep(480, 'sine', 0.03);
+  };
+
+  // Save Participant Record (create or update)
+  const handleSaveParticipantRecord = (record: ParticipantRecord) => {
+    let updated: ParticipantRecord[];
+    const exists = participants.some((p) => p.registerNumber === record.registerNumber || (record.id && p.id === record.id));
+    
+    if (exists) {
+      updated = participants.map((p) =>
+        (p.registerNumber === record.registerNumber || (record.id && p.id === record.id)) ? record : p
+      );
+      showNotice(`Updated details for ${record.name} (${record.registerNumber})`);
+    } else {
+      updated = [record, ...participants];
+      showNotice(`Registered new team: ${record.teamName || record.name} in ${record.department}`);
+    }
+
+    setParticipants(updated);
+    localStorage.setItem('triquetra_participants', JSON.stringify(updated));
+    window.dispatchEvent(new CustomEvent('triquetra_participants_updated', { detail: updated }));
+    setIsParticipantEditorOpen(false);
   };
 
   // Toggle Round 2 qualification for an individual candidate
@@ -804,6 +847,13 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
                   {/* Actions for this department */}
                   <div className="flex flex-wrap items-center gap-2">
                     <button
+                      onClick={() => handleOpenAddParticipant(currentDeptMeta.code)}
+                      className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-[#00f0ff] to-[#0099ff] hover:opacity-95 text-black font-extrabold font-mono text-xs flex items-center gap-1.5 cursor-pointer shadow-[0_0_15px_rgba(0,240,255,0.35)]"
+                    >
+                      <Plus className="w-3.5 h-3.5 stroke-[3]" /> + Register Team
+                    </button>
+
+                    <button
                       onClick={() => handleAddSampleInDept(currentDeptMeta.code)}
                       className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white font-mono text-xs flex items-center gap-1.5 cursor-pointer border border-white/10"
                     >
@@ -1108,13 +1158,22 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
 
                                 {/* Actions */}
                                 <td className="py-3 px-2 text-center">
-                                  <button
-                                    onClick={() => handleDeleteParticipant(p.registerNumber)}
-                                    className="p-1 rounded hover:bg-red-900/50 text-gray-500 hover:text-red-400 cursor-pointer"
-                                    title="Delete Record"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
+                                  <div className="flex items-center justify-center gap-1">
+                                    <button
+                                      onClick={() => handleOpenEditParticipant(p)}
+                                      className="p-1 rounded hover:bg-[#00f0ff]/20 text-[#00f0ff] hover:text-white cursor-pointer transition-colors"
+                                      title="Edit All Participant Details & Scores"
+                                    >
+                                      <Edit3 className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteParticipant(p.registerNumber)}
+                                      className="p-1 rounded hover:bg-red-900/50 text-gray-500 hover:text-red-400 cursor-pointer transition-colors"
+                                      title="Delete Record"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
                                 </td>
                               </tr>
                             );
@@ -1188,10 +1247,16 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
                 <div className="p-4 bg-[#0b1633] rounded-2xl border border-gray-800 flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h4 className="text-sm font-bold text-white font-mono">CROSS-DEPARTMENT OPERATIONS</h4>
-                    <p className="text-xs text-gray-400">Publish all 3 departments or export complete symposium telemetry.</p>
+                    <p className="text-xs text-gray-400">Manage participants, publish evaluation conclusions, or export data across all 3 tracks.</p>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={() => handleOpenAddParticipant('IT')}
+                      className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#00f0ff] to-[#0099ff] hover:opacity-95 text-black font-extrabold font-mono text-xs flex items-center gap-1.5 cursor-pointer shadow-[0_0_15px_rgba(0,240,255,0.35)]"
+                    >
+                      <Plus className="w-3.5 h-3.5 stroke-[3]" /> + Register Participant / Team
+                    </button>
                     <button
                       onClick={handleConcludeAll}
                       className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-400 to-teal-400 text-black font-extrabold font-mono text-xs uppercase cursor-pointer"
@@ -1232,46 +1297,75 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
                           <th className="py-2.5 px-3 text-center text-white bg-[#091838]">TOTAL</th>
                           <th className="py-2.5 px-3">TIME</th>
                           <th className="py-2.5 px-3 text-center">STATUS</th>
+                          <th className="py-2.5 px-2 text-center">ACTIONS</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-800 text-gray-200">
-                        {allRanked.map((p, idx) => (
-                          <tr key={p.registerNumber} className="hover:bg-[#0a183d]/60">
-                            <td className="py-2.5 px-3 text-center font-bold">#{idx + 1}</td>
-                            <td className="py-2.5 px-2 text-center">
-                              <span
-                                className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                  DEPARTMENTS[p.department]?.badgeClass || 'bg-gray-800 text-gray-300'
-                                }`}
-                              >
-                                {p.department}
-                              </span>
-                            </td>
-                            <td className="py-2.5 px-4 font-bold text-white">
-                              {p.teamName || p.name}
-                              <div className="text-[10px] text-gray-400 font-normal">Lead: {p.name}</div>
-                            </td>
-                            <td className="py-2.5 px-3 text-gray-400">{p.registerNumber}</td>
-                            <td className="py-2.5 px-2 text-center text-[#00f0ff]">{p.round1Score ?? 0}</td>
-                            <td className="py-2.5 px-2 text-center text-[#ff9e00]">{p.round2Score ?? '—'}</td>
-                            <td className="py-2.5 px-2 text-center text-[#c084fc]">{p.round3Score ?? '—'}</td>
-                            <td className="py-2.5 px-3 text-center font-bold text-emerald-400 bg-[#091838]">
-                              {p.totalScore ?? p.round1Score ?? 0}
-                            </td>
-                            <td className="py-2.5 px-3 text-gray-400">{p.timeUsed || '—'}</td>
-                            <td className="py-2.5 px-3 text-center">
-                              {p.qualifiedForRound2 ? (
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-400">
-                                  QUALIFIED
-                                </span>
-                              ) : (
-                                <span className="px-2 py-0.5 rounded text-[10px] text-gray-500">
-                                  {p.status || 'Active'}
-                                </span>
-                              )}
+                        {allRanked.length === 0 ? (
+                          <tr>
+                            <td colSpan={11} className="py-8 text-center text-gray-500 font-mono text-xs">
+                              No participants currently registered. Click <strong className="text-[#00f0ff]">+ Register Participant / Team</strong> to add candidate records.
                             </td>
                           </tr>
-                        ))}
+                        ) : (
+                          allRanked.map((p, idx) => (
+                            <tr key={p.registerNumber} className="hover:bg-[#0a183d]/60">
+                              <td className="py-2.5 px-3 text-center font-bold">#{idx + 1}</td>
+                              <td className="py-2.5 px-2 text-center">
+                                <span
+                                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                    DEPARTMENTS[p.department]?.badgeClass || 'bg-gray-800 text-gray-300'
+                                  }`}
+                                >
+                                  {p.department}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-4 font-bold text-white">
+                                {p.teamName || p.name}
+                                <div className="text-[10px] text-gray-400 font-normal">
+                                  Lead: {p.name} {p.partnerName ? `· Duo: ${p.partnerName}` : ''}
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3 text-gray-400">{p.registerNumber}</td>
+                              <td className="py-2.5 px-2 text-center text-[#00f0ff]">{p.round1Score ?? 0}</td>
+                              <td className="py-2.5 px-2 text-center text-[#ff9e00]">{p.round2Score ?? '—'}</td>
+                              <td className="py-2.5 px-2 text-center text-[#c084fc]">{p.round3Score ?? '—'}</td>
+                              <td className="py-2.5 px-3 text-center font-bold text-emerald-400 bg-[#091838]">
+                                {p.totalScore ?? p.round1Score ?? 0}
+                              </td>
+                              <td className="py-2.5 px-3 text-gray-400">{p.timeUsed || '—'}</td>
+                              <td className="py-2.5 px-3 text-center">
+                                {p.qualifiedForRound2 ? (
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-500/30">
+                                    QUALIFIED
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 rounded text-[10px] text-gray-500">
+                                    {p.status || 'Active'}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-2 text-center">
+                                <div className="flex items-center justify-center gap-1">
+                                  <button
+                                    onClick={() => handleOpenEditParticipant(p)}
+                                    className="p-1 rounded hover:bg-[#00f0ff]/20 text-[#00f0ff] hover:text-white cursor-pointer transition-colors"
+                                    title="Edit Participant Details"
+                                  >
+                                    <Edit3 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteParticipant(p.registerNumber)}
+                                    className="p-1 rounded hover:bg-red-900/50 text-gray-500 hover:text-red-400 cursor-pointer transition-colors"
+                                    title="Delete Record"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -1436,6 +1530,20 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
             setQuestionToEdit(null);
           }}
           onSave={handleSaveQuestion}
+        />
+      )}
+
+      {/* Participant Editor Modal (Add / Edit Full Details & Scores) */}
+      {isParticipantEditorOpen && (
+        <AdminParticipantEditorModal
+          isOpen={isParticipantEditorOpen}
+          participant={participantToEdit}
+          defaultDepartment={editorDefaultDept}
+          onClose={() => {
+            setIsParticipantEditorOpen(false);
+            setParticipantToEdit(null);
+          }}
+          onSave={handleSaveParticipantRecord}
         />
       )}
     </div>
