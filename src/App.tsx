@@ -200,11 +200,8 @@ export default function App() {
 
     soundManager.playSuccess();
 
-    if (currentRound < 3) {
-      setPhase('ROUND_RESULTS');
-    } else {
-      setPhase('FINAL_RESULTS');
-    }
+    // Always navigate to ROUND_RESULTS first so candidates see the full question & answer explanations for that round
+    setPhase('ROUND_RESULTS');
   }, [currentRound, allQuestions, answers, timeLeft, tabSwitches, syncParticipantRecord]);
 
   // Urgency Timer Countdown during COMPETITION phase

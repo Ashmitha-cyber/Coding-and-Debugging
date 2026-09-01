@@ -670,7 +670,7 @@ export const RoundResults: React.FC<RoundResultsProps> = ({
                 }}
                 className="w-full py-3.5 rounded-xl bg-gradient-to-r from-[#00d2ff] to-[#0055ff] hover:opacity-95 text-black font-extrabold font-mono text-xs tracking-widest uppercase flex items-center justify-center gap-2 shadow-[0_0_30px_rgba(0,240,255,0.4)] cursor-pointer transition-all active:scale-95"
               >
-                <span>{round < 3 ? `ADVANCE TO LEVEL 0${round + 1}` : 'VIEW CHAMPIONSHIP REPORT'}</span>
+                <span>{round < 3 ? `ADVANCE TO LEVEL 0${round + 1}` : 'VIEW FINAL CHAMPIONSHIP & TELEMETRY REPORT'}</span>
                 <ArrowRight className="w-4 h-4 stroke-[3]" />
               </button>
             </div>
@@ -871,6 +871,20 @@ export const RoundResults: React.FC<RoundResultsProps> = ({
                       );
                     })
                   )}
+                </div>
+
+                {/* Bottom Action Button for effortless navigation after reviewing code explanations */}
+                <div className="pt-4">
+                  <button
+                    onClick={() => {
+                      soundManager.playLaunch();
+                      onContinue();
+                    }}
+                    className="w-full py-3.5 rounded-xl bg-gradient-to-r from-[#00d2ff] to-[#0055ff] hover:opacity-95 text-black font-extrabold font-mono text-xs tracking-widest uppercase flex items-center justify-center gap-2 shadow-[0_0_30px_rgba(0,240,255,0.4)] cursor-pointer transition-all active:scale-95"
+                  >
+                    <span>{round < 3 ? `ADVANCE TO LEVEL 0${round + 1}` : 'VIEW FINAL CHAMPIONSHIP & TELEMETRY REPORT'}</span>
+                    <ArrowRight className="w-4 h-4 stroke-[3]" />
+                  </button>
                 </div>
               </div>
             )}
