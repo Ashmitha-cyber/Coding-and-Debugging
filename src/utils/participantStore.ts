@@ -4,7 +4,6 @@ import {
   collection,
   doc,
   setDoc,
-  getDocs,
   deleteDoc,
   writeBatch,
   onSnapshot,
@@ -50,16 +49,40 @@ class ParticipantStore {
   private firestoreParticipantsUnsub: Unsubscribe | null = null;
   private firestoreConclusionsUnsub: Unsubscribe | null = null;
   public firestoreConnected = false;
+  public firestoreDisabled = false;
 
   constructor() {
     this.initFirestoreListeners();
   }
 
+  // Gracefully disable Firestore when free daily write quota or rate limit is reached
+  private disableFirestore(reason?: string) {
+    if (this.firestoreDisabled) return;
+    this.firestoreDisabled = true;
+    this.firestoreConnected = false;
+    if (reason) {
+      console.warn(`[ParticipantStore] Firestore real-time listener suspended (${reason}). Seamlessly operating via central Express backend & local cache.`);
+    }
+    if (this.firestoreParticipantsUnsub) {
+      try {
+        this.firestoreParticipantsUnsub();
+      } catch (_) {}
+      this.firestoreParticipantsUnsub = null;
+    }
+    if (this.firestoreConclusionsUnsub) {
+      try {
+        this.firestoreConclusionsUnsub();
+      } catch (_) {}
+      this.firestoreConclusionsUnsub = null;
+    }
+  }
+
   // Real-time Firestore snapshot listeners across all PCs
   private initFirestoreListeners() {
+    if (this.firestoreDisabled) return;
+
     try {
       if (!db) {
-        console.warn('Firestore instance not initialized.');
         return;
       }
 
@@ -85,17 +108,17 @@ class ParticipantStore {
             firestoreList.forEach((p) => map.set(p.registerNumber.toUpperCase(), p));
             const merged = Array.from(map.values());
             this.setLocalCache(merged);
-          } else {
-            // If firestore is empty, seed local participants into Firestore
-            const cached = this.getCachedParticipants();
-            if (cached.length > 0) {
-              this.seedToFirestore(cached);
-            }
           }
         },
         (error) => {
-          console.warn('Firestore snapshot notice (syncing via central server):', error.message);
-          this.firestoreConnected = false;
+          const msg = error?.message || '';
+          const code = (error as any)?.code || '';
+          if (code === 'resource-exhausted' || msg.includes('Quota') || msg.includes('quota') || msg.includes('resource-exhausted')) {
+            this.disableFirestore('daily write/read quota reached');
+          } else {
+            console.warn('Firestore snapshot notice (syncing via central server):', msg);
+            this.firestoreConnected = false;
+          }
         }
       );
 
@@ -116,28 +139,15 @@ class ParticipantStore {
           }
         },
         (err) => {
-          console.warn('Firestore conclusions listener notice:', err.message);
+          const msg = err?.message || '';
+          const code = (err as any)?.code || '';
+          if (code === 'resource-exhausted' || msg.includes('Quota') || msg.includes('quota')) {
+            this.disableFirestore('quota reached');
+          }
         }
       );
-    } catch (e) {
-      console.warn('Could not initialize Firestore listeners:', e);
-      this.firestoreConnected = false;
-    }
-  }
-
-  private async seedToFirestore(list: ParticipantRecord[]) {
-    if (!db) return;
-    try {
-      const batch = writeBatch(db);
-      list.forEach((p) => {
-        const docId = safeDocId(p.registerNumber, p.id);
-        const clean = sanitizeForFirestore(p);
-        batch.set(doc(db, 'participants', docId), clean, { merge: true });
-      });
-      await batch.commit();
-      console.log(`Seeded ${list.length} participants to Cloud Firestore.`);
-    } catch (err) {
-      console.warn('Firestore seed notice:', err);
+    } catch (e: any) {
+      this.disableFirestore(e?.message || 'initialization notice');
     }
   }
 
@@ -203,38 +213,7 @@ class ParticipantStore {
 
     this.isSyncing = true;
     try {
-      // 1. Direct Firestore Query Sync
-      if (db) {
-        try {
-          const colRef = collection(db, 'participants');
-          const snap = await getDocs(colRef);
-          const fsList: ParticipantRecord[] = [];
-          snap.forEach((d) => {
-            const data = d.data() as ParticipantRecord;
-            if (data && data.registerNumber) fsList.push(data);
-          });
-
-          const local = this.getCachedParticipants();
-          const map = new Map<string, ParticipantRecord>();
-          local.forEach((p) => map.set(p.registerNumber.toUpperCase(), p));
-          fsList.forEach((p) => map.set(p.registerNumber.toUpperCase(), p));
-          const merged = Array.from(map.values());
-
-          if (fsList.length > 0 || local.length > 0) {
-            this.setLocalCache(merged);
-            // Write any local not yet on Firestore
-            for (const p of local) {
-              const docId = safeDocId(p.registerNumber, p.id);
-              const clean = sanitizeForFirestore(p);
-              setDoc(doc(db, 'participants', docId), clean, { merge: true }).catch(() => {});
-            }
-          }
-        } catch (fsErr) {
-          console.warn('Firestore fetch query notice:', fsErr);
-        }
-      }
-
-      // 2. Server API fallback sync
+      // Server API sync (persisted to server file data/participants.json)
       const localParticipants = this.getCachedParticipants();
       const res = await fetch('/api/participants/sync', {
         method: 'POST',
@@ -253,7 +232,7 @@ class ParticipantStore {
         }
       }
     } catch (e) {
-      console.warn('Sync finished with local storage cache');
+      // Offline fallback to local cache
     } finally {
       this.isSyncing = false;
     }
@@ -265,7 +244,7 @@ class ParticipantStore {
     return this.syncWithServer();
   }
 
-  // Fetch conclusions state from server / Firestore
+  // Fetch conclusions state from server
   async fetchConclusions(): Promise<ConclusionsState> {
     try {
       const res = await fetch('/api/conclusions', {
@@ -285,12 +264,12 @@ class ParticipantStore {
         }
       }
     } catch (e) {
-      console.warn('Error fetching conclusions from server', e);
+      // Ignore network errors
     }
     return this.getCachedConclusions();
   }
 
-  // Register or Update a participant record (Writes to Firestore + Local Cache + Central Server)
+  // Register or Update a participant record (Writes to Local Cache + Central Server + Firestore if active)
   async registerOrUpdate(record: Partial<ParticipantRecord> & { registerNumber: string }): Promise<ParticipantRecord> {
     // 1. Update local cache immediately for instant UI response
     const cached = this.getCachedParticipants();
@@ -338,16 +317,7 @@ class ParticipantStore {
 
     this.setLocalCache(updatedList);
 
-    // 2. Write directly to Firestore with sanitized object (removes undefined fields)
-    if (db) {
-      const docId = safeDocId(targetRecord.registerNumber, targetRecord.id);
-      const cleanData = sanitizeForFirestore(targetRecord);
-      setDoc(doc(db, 'participants', docId), cleanData, { merge: true }).catch((err) => {
-        console.warn('Firestore direct write notice:', err.message);
-      });
-    }
-
-    // 3. Broadcast to Central Server API as backup
+    // 2. Broadcast to Central Server API (Reliable server persistence)
     try {
       const res = await fetch('/api/participants', {
         method: 'POST',
@@ -358,11 +328,26 @@ class ParticipantStore {
         const data = await res.json();
         if (data.success && Array.isArray(data.participants)) {
           this.setLocalCache(data.participants);
-          return data.participant || targetRecord;
         }
       }
     } catch (e) {
       console.warn('Server API sync notice:', e);
+    }
+
+    // 3. Write to Firestore if connected and not exhausted
+    if (db && !this.firestoreDisabled) {
+      try {
+        const docId = safeDocId(targetRecord.registerNumber, targetRecord.id);
+        const cleanData = sanitizeForFirestore(targetRecord);
+        setDoc(doc(db, 'participants', docId), cleanData, { merge: true }).catch((err) => {
+          const msg = err?.message || '';
+          if (err?.code === 'resource-exhausted' || msg.includes('Quota') || msg.includes('quota')) {
+            this.disableFirestore('quota reached on write');
+          }
+        });
+      } catch (err: any) {
+        this.disableFirestore(err?.message);
+      }
     }
 
     return targetRecord;
@@ -377,13 +362,6 @@ class ParticipantStore {
     );
     this.setLocalCache(updated);
 
-    // Firestore update
-    if (db) {
-      const docId = safeDocId(upperReg);
-      const cleanData = sanitizeForFirestore(updates);
-      setDoc(doc(db, 'participants', docId), cleanData, { merge: true }).catch(() => {});
-    }
-
     try {
       const res = await fetch(`/api/participants/${encodeURIComponent(upperReg)}`, {
         method: 'PUT',
@@ -396,11 +374,24 @@ class ParticipantStore {
           this.setLocalCache(data.participants);
         }
       }
-      return true;
     } catch (e) {
-      console.error('Failed to PUT participant', e);
-      return false;
+      console.error('Failed to PUT participant to server', e);
     }
+
+    // Optional Firestore update
+    if (db && !this.firestoreDisabled) {
+      try {
+        const docId = safeDocId(upperReg);
+        const cleanData = sanitizeForFirestore(updates);
+        setDoc(doc(db, 'participants', docId), cleanData, { merge: true }).catch((err) => {
+          if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota')) {
+            this.disableFirestore('quota reached');
+          }
+        });
+      } catch (_) {}
+    }
+
+    return true;
   }
 
   // Delete participant
@@ -409,12 +400,6 @@ class ParticipantStore {
     const upperReg = regNo.toUpperCase().trim();
     const updated = cached.filter((p) => p.registerNumber.toUpperCase() !== upperReg);
     this.setLocalCache(updated);
-
-    // Firestore delete
-    if (db) {
-      const docId = safeDocId(upperReg);
-      deleteDoc(doc(db, 'participants', docId)).catch(() => {});
-    }
 
     try {
       const res = await fetch(`/api/participants/${encodeURIComponent(upperReg)}`, {
@@ -426,31 +411,24 @@ class ParticipantStore {
           this.setLocalCache(data.participants);
         }
       }
-      return true;
     } catch (e) {
       console.error('Failed to DELETE participant', e);
-      return false;
     }
+
+    // Optional Firestore delete
+    if (db && !this.firestoreDisabled) {
+      try {
+        const docId = safeDocId(upperReg);
+        deleteDoc(doc(db, 'participants', docId)).catch(() => {});
+      } catch (_) {}
+    }
+
+    return true;
   }
 
   // Save bulk participants (e.g. conclusion qualification update)
   async saveBulkParticipants(list: ParticipantRecord[]): Promise<boolean> {
     this.setLocalCache(list);
-
-    // Firestore batch write
-    if (db) {
-      try {
-        const batch = writeBatch(db);
-        list.forEach((p) => {
-          const docId = safeDocId(p.registerNumber, p.id);
-          const clean = sanitizeForFirestore(p);
-          batch.set(doc(db, 'participants', docId), clean, { merge: true });
-        });
-        batch.commit().catch(() => {});
-      } catch (e) {
-        console.warn('Firestore batch write notice:', e);
-      }
-    }
 
     try {
       const res = await fetch('/api/participants/bulk', {
@@ -464,11 +442,27 @@ class ParticipantStore {
           this.setLocalCache(data.participants);
         }
       }
-      return true;
     } catch (e) {
       console.error('Failed to save bulk participants', e);
-      return false;
     }
+
+    if (db && !this.firestoreDisabled) {
+      try {
+        const batch = writeBatch(db);
+        list.slice(0, 50).forEach((p) => {
+          const docId = safeDocId(p.registerNumber, p.id);
+          const clean = sanitizeForFirestore(p);
+          batch.set(doc(db, 'participants', docId), clean, { merge: true });
+        });
+        batch.commit().catch((err) => {
+          if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota')) {
+            this.disableFirestore('quota reached');
+          }
+        });
+      } catch (_) {}
+    }
+
+    return true;
   }
 
   // Import external JSON list and merge with database
@@ -480,19 +474,6 @@ class ParticipantStore {
     const merged = Array.from(map.values());
 
     this.setLocalCache(merged);
-
-    // Write all to Firestore
-    if (db) {
-      try {
-        const batch = writeBatch(db);
-        merged.forEach((p) => {
-          const docId = safeDocId(p.registerNumber, p.id);
-          const clean = sanitizeForFirestore(p);
-          batch.set(doc(db, 'participants', docId), clean, { merge: true });
-        });
-        batch.commit().catch(() => {});
-      } catch (e) {}
-    }
 
     try {
       const res = await fetch('/api/participants/sync', {
@@ -510,27 +491,15 @@ class ParticipantStore {
     } catch (e) {
       console.error('Failed to import and sync records', e);
     }
+
     return this.getCachedParticipants();
   }
 
   // Clear department participants
   async clearDepartment(department: Department): Promise<boolean> {
     const cached = this.getCachedParticipants();
-    const toDelete = cached.filter((p) => p.department === department);
     const updated = cached.filter((p) => p.department !== department);
     this.setLocalCache(updated);
-
-    // Delete in Firestore
-    if (db) {
-      try {
-        const batch = writeBatch(db);
-        toDelete.forEach((p) => {
-          const docId = safeDocId(p.registerNumber, p.id);
-          batch.delete(doc(db, 'participants', docId));
-        });
-        batch.commit().catch(() => {});
-      } catch (e) {}
-    }
 
     try {
       const res = await fetch('/api/participants/clear-dept', {
@@ -544,11 +513,11 @@ class ParticipantStore {
           this.setLocalCache(data.participants);
         }
       }
-      return true;
     } catch (e) {
       console.error('Failed to clear department', e);
-      return false;
     }
+
+    return true;
   }
 
   // Update department conclusions
@@ -559,12 +528,6 @@ class ParticipantStore {
       ...updates
     };
     this.setConclusionsCache(updated);
-
-    // Firestore conclusions document
-    if (db) {
-      const clean = sanitizeForFirestore(updated);
-      setDoc(doc(db, 'system_state', 'conclusions'), clean, { merge: true }).catch(() => {});
-    }
 
     try {
       const res = await fetch('/api/conclusions', {
@@ -588,11 +551,23 @@ class ParticipantStore {
     } catch (e) {
       console.error('Failed to save conclusions', e);
     }
+
+    if (db && !this.firestoreDisabled) {
+      try {
+        const clean = sanitizeForFirestore(updated);
+        setDoc(doc(db, 'system_state', 'conclusions'), clean, { merge: true }).catch((err) => {
+          if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota')) {
+            this.disableFirestore('quota reached');
+          }
+        });
+      } catch (_) {}
+    }
+
     return updated;
   }
 
   // Start periodic polling
-  startPolling(intervalMs: number = 2000): () => void {
+  startPolling(intervalMs: number = 3500): () => void {
     this.syncWithServer();
     this.fetchConclusions();
 
@@ -611,10 +586,16 @@ class ParticipantStore {
         this.pollingInterval = null;
       }
       if (this.firestoreParticipantsUnsub) {
-        this.firestoreParticipantsUnsub();
+        try {
+          this.firestoreParticipantsUnsub();
+        } catch (_) {}
+        this.firestoreParticipantsUnsub = null;
       }
       if (this.firestoreConclusionsUnsub) {
-        this.firestoreConclusionsUnsub();
+        try {
+          this.firestoreConclusionsUnsub();
+        } catch (_) {}
+        this.firestoreConclusionsUnsub = null;
       }
     };
   }

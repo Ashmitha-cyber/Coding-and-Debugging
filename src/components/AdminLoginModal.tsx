@@ -137,11 +137,11 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
       loadQuestions();
       loadAllConclusions();
 
-      // Poll every 2 seconds while admin modal is open to pick up participants registering on other PCs
+      // Poll every 4 seconds while admin modal is open to pick up participants registering on other PCs
       const interval = setInterval(() => {
         loadParticipants();
         loadAllConclusions();
-      }, 2000);
+      }, 4000);
 
       const handleUpdate = () => {
         loadParticipants();
