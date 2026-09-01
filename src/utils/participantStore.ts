@@ -8,6 +8,7 @@ import {
   deleteDoc,
   writeBatch,
   onSnapshot,
+  terminate,
   Unsubscribe
 } from 'firebase/firestore';
 
@@ -15,6 +16,7 @@ const STORAGE_KEY = 'triquetra_participants';
 const CONCLUSIONS_KEY_PREFIX = 'triquetra_round1_concluded';
 const PARTICIPANTS_UPDATED_EVENT = 'triquetra_participants_updated';
 const CONCLUSIONS_UPDATED_EVENT = 'triquetra_round1_concluded_event';
+const FIRESTORE_EXHAUSTED_KEY = 'triquetra_firestore_exhausted';
 
 export interface ConclusionsState {
   IT: boolean;
@@ -53,7 +55,15 @@ class ParticipantStore {
   public firestoreDisabled = false;
 
   constructor() {
-    this.initFirestoreListeners();
+    try {
+      if (typeof window !== 'undefined' && sessionStorage.getItem(FIRESTORE_EXHAUSTED_KEY) === 'true') {
+        this.firestoreDisabled = true;
+      }
+    } catch (_) {}
+
+    if (!this.firestoreDisabled) {
+      this.initFirestoreListeners();
+    }
   }
 
   // Gracefully disable Firestore when free daily write quota or rate limit is reached
@@ -61,9 +71,16 @@ class ParticipantStore {
     if (this.firestoreDisabled) return;
     this.firestoreDisabled = true;
     this.firestoreConnected = false;
+    try {
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem(FIRESTORE_EXHAUSTED_KEY, 'true');
+      }
+    } catch (_) {}
+
     if (reason) {
-      console.warn(`[ParticipantStore] Firestore real-time listener suspended (${reason}). Operating via central Express backend & local cache.`);
+      console.warn(`[ParticipantStore] Firestore quota limit reached (${reason}). Seamlessly operating via central Express backend & local cache.`);
     }
+
     if (this.firestoreParticipantsUnsub) {
       try {
         this.firestoreParticipantsUnsub();
@@ -75,6 +92,12 @@ class ParticipantStore {
         this.firestoreConclusionsUnsub();
       } catch (_) {}
       this.firestoreConclusionsUnsub = null;
+    }
+
+    if (db) {
+      try {
+        terminate(db).catch(() => {});
+      } catch (_) {}
     }
   }
 
