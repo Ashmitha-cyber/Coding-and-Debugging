@@ -17,12 +17,44 @@ const CONCLUSIONS_KEY_PREFIX = 'triquetra_round1_concluded';
 const PARTICIPANTS_UPDATED_EVENT = 'triquetra_participants_updated';
 const CONCLUSIONS_UPDATED_EVENT = 'triquetra_round1_concluded_event';
 const FIRESTORE_EXHAUSTED_KEY = 'triquetra_firestore_exhausted';
+const DELETED_IDS_KEY = 'triquetra_deleted_ids';
 
 export interface ConclusionsState {
   IT: boolean;
   AIDS: boolean;
   CSBS: boolean;
   global: boolean;
+}
+
+function getDeletedTombstones(): Set<string> {
+  try {
+    const raw = localStorage.getItem(DELETED_IDS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return new Set(parsed.map((id: string) => String(id).toUpperCase().trim()));
+      }
+    }
+  } catch (_) {}
+  return new Set();
+}
+
+function addDeletedTombstone(idOrRegNo: string) {
+  if (!idOrRegNo) return;
+  try {
+    const set = getDeletedTombstones();
+    set.add(idOrRegNo.trim().toUpperCase());
+    localStorage.setItem(DELETED_IDS_KEY, JSON.stringify(Array.from(set)));
+  } catch (_) {}
+}
+
+function removeDeletedTombstone(idOrRegNo: string) {
+  if (!idOrRegNo) return;
+  try {
+    const set = getDeletedTombstones();
+    set.delete(idOrRegNo.trim().toUpperCase());
+    localStorage.setItem(DELETED_IDS_KEY, JSON.stringify(Array.from(set)));
+  } catch (_) {}
 }
 
 // Strip undefined fields because Firestore rejects undefined property values
@@ -191,13 +223,21 @@ class ParticipantStore {
     }
   }
 
-  // Get cached participants synchronously from localStorage
+  // Get cached participants synchronously from localStorage (filtered by tombstones)
   getCachedParticipants(): ParticipantRecord[] {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          const tombstones = getDeletedTombstones();
+          if (tombstones.size === 0) return parsed;
+          return parsed.filter((p) => {
+            const reg = (p.registerNumber || '').toUpperCase().trim();
+            const id = (p.id || '').toUpperCase().trim();
+            return (!reg || !tombstones.has(reg)) && (!id || !tombstones.has(id));
+          });
+        }
       }
     } catch (e) {
       console.error('Failed to read cached participants', e);
@@ -227,13 +267,22 @@ class ParticipantStore {
   // Save to local cache and trigger UI event
   private setLocalCache(participants: ParticipantRecord[]) {
     try {
+      const tombstones = getDeletedTombstones();
+      const sanitized = tombstones.size > 0
+        ? participants.filter((p) => {
+            const reg = (p.registerNumber || '').toUpperCase().trim();
+            const id = (p.id || '').toUpperCase().trim();
+            return (!reg || !tombstones.has(reg)) && (!id || !tombstones.has(id));
+          })
+        : participants;
+
       const prevJson = localStorage.getItem(STORAGE_KEY);
-      const newJson = JSON.stringify(participants);
+      const newJson = JSON.stringify(sanitized);
       if (prevJson === newJson) {
         return; // Avoid unnecessary re-renders, disk churn, or event loops
       }
       localStorage.setItem(STORAGE_KEY, newJson);
-      window.dispatchEvent(new CustomEvent(PARTICIPANTS_UPDATED_EVENT, { detail: participants }));
+      window.dispatchEvent(new CustomEvent(PARTICIPANTS_UPDATED_EVENT, { detail: sanitized }));
     } catch (e) {
       console.error('Failed to set local participants cache', e);
     }
@@ -285,21 +334,14 @@ class ParticipantStore {
       if (res.ok) {
         const data = await res.json();
         if (data.success && Array.isArray(data.participants)) {
-          const map = new Map<string, ParticipantRecord>();
-          localParticipants.forEach((p) => {
-            const k = (p.registerNumber || p.id || '').toUpperCase().trim();
-            if (k) map.set(k, p);
+          const tombstones = getDeletedTombstones();
+          const cleanServerList = data.participants.filter((p: ParticipantRecord) => {
+            const reg = (p.registerNumber || '').toUpperCase().trim();
+            const id = (p.id || '').toUpperCase().trim();
+            return (!reg || !tombstones.has(reg)) && (!id || !tombstones.has(id));
           });
-          data.participants.forEach((p: ParticipantRecord) => {
-            const k = (p.registerNumber || p.id || '').toUpperCase().trim();
-            if (k) {
-              const ex = map.get(k);
-              map.set(k, ex ? { ...ex, ...p } : p);
-            }
-          });
-          const merged = Array.from(map.values());
-          this.setLocalCache(merged);
-          return merged;
+          this.setLocalCache(cleanServerList);
+          return cleanServerList;
         }
       }
     } catch (e) {
@@ -312,34 +354,9 @@ class ParticipantStore {
 
   // Fetch all participants from BOTH Firestore and Central Server, merging seamlessly
   async fetchAllParticipants(): Promise<ParticipantRecord[]> {
-    const cached = this.getCachedParticipants();
-    const map = new Map<string, ParticipantRecord>();
-    cached.forEach((p) => {
-      const k = (p.registerNumber || p.id || '').toUpperCase().trim();
-      if (k) map.set(k, p);
-    });
+    const tombstones = getDeletedTombstones();
 
-    let firestoreList: ParticipantRecord[] = [];
-    if (db && !this.firestoreDisabled) {
-      try {
-        const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500));
-        const firestorePromise = getDocs(collection(db, 'participants'));
-        const snap = await Promise.race([firestorePromise, timeoutPromise]);
-        if (snap && 'docs' in snap) {
-          this.firestoreConnected = true;
-          snap.docs.forEach((docSnap) => {
-            const data = docSnap.data() as ParticipantRecord;
-            if (data && (data.registerNumber || data.id)) {
-              firestoreList.push(data);
-            }
-          });
-        }
-      } catch (err: any) {
-        console.warn('Firestore direct getDocs notice:', err?.message);
-      }
-    }
-
-    let serverList: ParticipantRecord[] = [];
+    let serverList: ParticipantRecord[] | null = null;
     try {
       const res = await fetch('/api/participants', {
         headers: {
@@ -350,34 +367,23 @@ class ParticipantStore {
       if (res.ok) {
         const data = await res.json();
         if (data.success && Array.isArray(data.participants)) {
-          serverList = data.participants;
+          serverList = data.participants.filter((p: ParticipantRecord) => {
+            const reg = (p.registerNumber || '').toUpperCase().trim();
+            const id = (p.id || '').toUpperCase().trim();
+            return (!reg || !tombstones.has(reg)) && (!id || !tombstones.has(id));
+          });
         }
       }
     } catch (e) {
       console.warn('Server fetch notice:', e);
     }
 
-    // Merge server list
-    serverList.forEach((p) => {
-      const k = (p.registerNumber || p.id || '').toUpperCase().trim();
-      if (k) {
-        const ex = map.get(k);
-        map.set(k, ex ? { ...ex, ...p } : p);
-      }
-    });
+    if (serverList !== null) {
+      this.setLocalCache(serverList);
+      return serverList;
+    }
 
-    // Merge firestore list
-    firestoreList.forEach((p) => {
-      const k = (p.registerNumber || p.id || '').toUpperCase().trim();
-      if (k) {
-        const ex = map.get(k);
-        map.set(k, ex ? { ...ex, ...p } : p);
-      }
-    });
-
-    const merged = Array.from(map.values());
-    this.setLocalCache(merged);
-    return merged;
+    return this.getCachedParticipants();
   }
 
   // Fetch conclusions state from server & Firestore
@@ -408,6 +414,9 @@ class ParticipantStore {
   // Register or Update a participant record (Writes to Local Cache + Central Server + Firestore in parallel)
   async registerOrUpdate(record: Partial<ParticipantRecord> & { registerNumber: string }): Promise<ParticipantRecord> {
     const regNo = record.registerNumber.toUpperCase().trim();
+    if (regNo) removeDeletedTombstone(regNo);
+    if (record.id) removeDeletedTombstone(record.id);
+
     const cached = this.getCachedParticipants();
     const existingIndex = cached.findIndex(
       (p) => (p.registerNumber && p.registerNumber.toUpperCase() === regNo) || (record.id && p.id === record.id)
@@ -481,19 +490,13 @@ class ParticipantStore {
         if (res.ok) {
           const data = await res.json();
           if (data.success && Array.isArray(data.participants)) {
-            const map = new Map<string, ParticipantRecord>();
-            this.getCachedParticipants().forEach((p) => {
-              const k = (p.registerNumber || p.id).toUpperCase().trim();
-              if (k) map.set(k, p);
+            const tombstones = getDeletedTombstones();
+            const cleanServer = data.participants.filter((p: ParticipantRecord) => {
+              const r = (p.registerNumber || '').toUpperCase().trim();
+              const i = (p.id || '').toUpperCase().trim();
+              return (!r || !tombstones.has(r)) && (!i || !tombstones.has(i));
             });
-            data.participants.forEach((p: ParticipantRecord) => {
-              const k = (p.registerNumber || p.id).toUpperCase().trim();
-              if (k) {
-                const ex = map.get(k);
-                map.set(k, ex ? { ...ex, ...p } : p);
-              }
-            });
-            this.setLocalCache(Array.from(map.values()));
+            this.setLocalCache(cleanServer);
           }
         }
       } catch (e) {
@@ -507,8 +510,10 @@ class ParticipantStore {
 
   // Update specific participant by register number
   async updateParticipant(regNo: string, updates: Partial<ParticipantRecord>): Promise<boolean> {
-    const cached = this.getCachedParticipants();
     const upperReg = regNo.toUpperCase().trim();
+    if (upperReg) removeDeletedTombstone(upperReg);
+
+    const cached = this.getCachedParticipants();
     const updated = cached.map((p) =>
       p.registerNumber.toUpperCase() === upperReg ? { ...p, ...updates, registerNumber: upperReg } : p
     );
@@ -539,7 +544,13 @@ class ParticipantStore {
         if (res.ok) {
           const data = await res.json();
           if (data.success && Array.isArray(data.participants)) {
-            this.setLocalCache(data.participants);
+            const tombstones = getDeletedTombstones();
+            const cleanServer = data.participants.filter((p: ParticipantRecord) => {
+              const r = (p.registerNumber || '').toUpperCase().trim();
+              const i = (p.id || '').toUpperCase().trim();
+              return (!r || !tombstones.has(r)) && (!i || !tombstones.has(i));
+            });
+            this.setLocalCache(cleanServer);
           }
         }
       } catch (e) {
@@ -555,6 +566,9 @@ class ParticipantStore {
   async deleteParticipant(regNoOrId: string): Promise<boolean> {
     const rawTarget = (regNoOrId || '').trim();
     const upperTarget = rawTarget.toUpperCase();
+    if (rawTarget) addDeletedTombstone(rawTarget);
+    if (upperTarget) addDeletedTombstone(upperTarget);
+
     const cached = this.getCachedParticipants();
     const updated = cached.filter(
       (p) =>
@@ -585,7 +599,13 @@ class ParticipantStore {
         if (res.ok) {
           const data = await res.json();
           if (data.success && Array.isArray(data.participants)) {
-            this.setLocalCache(data.participants);
+            const tombstones = getDeletedTombstones();
+            const cleanServer = data.participants.filter((p: ParticipantRecord) => {
+              const r = (p.registerNumber || '').toUpperCase().trim();
+              const i = (p.id || '').toUpperCase().trim();
+              return (!r || !tombstones.has(r)) && (!i || !tombstones.has(i));
+            });
+            this.setLocalCache(cleanServer);
           }
         }
       } catch (e) {
@@ -600,6 +620,10 @@ class ParticipantStore {
   // Clear all participants across all departments
   async clearAllParticipants(): Promise<boolean> {
     const cached = this.getCachedParticipants();
+    cached.forEach((p) => {
+      if (p.registerNumber) addDeletedTombstone(p.registerNumber);
+      if (p.id) addDeletedTombstone(p.id);
+    });
     this.setLocalCache([]);
 
     const firestorePromise = (async () => {
@@ -642,6 +666,10 @@ class ParticipantStore {
 
   // Save bulk participants (e.g. conclusion qualification update)
   async saveBulkParticipants(list: ParticipantRecord[]): Promise<boolean> {
+    list.forEach((p) => {
+      if (p.registerNumber) removeDeletedTombstone(p.registerNumber);
+      if (p.id) removeDeletedTombstone(p.id);
+    });
     this.setLocalCache(list);
 
     const firestorePromise = (async () => {
@@ -686,6 +714,10 @@ class ParticipantStore {
 
   // Import external JSON list and merge with database
   async importAndMergeParticipants(newRecords: ParticipantRecord[]): Promise<ParticipantRecord[]> {
+    newRecords.forEach((p) => {
+      if (p.registerNumber) removeDeletedTombstone(p.registerNumber);
+      if (p.id) removeDeletedTombstone(p.id);
+    });
     const existing = this.getCachedParticipants();
     const map = new Map<string, ParticipantRecord>();
     existing.forEach((p) => map.set((p.registerNumber || p.id).toUpperCase(), p));
@@ -718,6 +750,10 @@ class ParticipantStore {
   async clearDepartment(department: Department): Promise<boolean> {
     const cached = this.getCachedParticipants();
     const toDelete = cached.filter((p) => p.department === department);
+    toDelete.forEach((p) => {
+      if (p.registerNumber) addDeletedTombstone(p.registerNumber);
+      if (p.id) addDeletedTombstone(p.id);
+    });
     const updated = cached.filter((p) => p.department !== department);
     this.setLocalCache(updated);
 
@@ -748,7 +784,7 @@ class ParticipantStore {
           }
         }
       } catch (e) {
-        console.error('Failed to clear department', e);
+        console.error('Failed to clear department participants', e);
       }
     })();
 

@@ -176,6 +176,16 @@ let conclusions: Record<string, boolean> = loadJsonFile(CONCLUSIONS_FILE, {
 });
 let customQuestions: any[] = loadJsonFile(QUESTIONS_FILE, []);
 
+// Sanitize initial participants with any existing tombstones
+if (deletedParticipants.length > 0) {
+  const delSet = new Set(deletedParticipants.map((d) => String(d).toUpperCase().trim()));
+  participants = participants.filter((p) => {
+    const reg = (p.registerNumber || '').toUpperCase().trim();
+    const id = (p.id || '').toUpperCase().trim();
+    return (!reg || !delSet.has(reg)) && (!id || !delSet.has(id));
+  });
+}
+
 // Save initial file if not present
 if (!fs.existsSync(PARTICIPANTS_FILE)) {
   saveJsonFile(PARTICIPANTS_FILE, participants);
@@ -308,10 +318,16 @@ app.post('/api/participants/sync', (req, res) => {
 
 // GET all participants (accessed by any PC / Admin panel / Leaderboard)
 app.get('/api/participants', (req, res) => {
+  const delSet = new Set(deletedParticipants.map((d) => String(d).toUpperCase().trim()));
+  const filtered = participants.filter((p) => {
+    const reg = (p.registerNumber || '').toUpperCase().trim();
+    const id = (p.id || '').toUpperCase().trim();
+    return (!reg || !delSet.has(reg)) && (!id || !delSet.has(id));
+  });
   res.json({
     success: true,
-    participants,
-    count: participants.length,
+    participants: filtered,
+    count: filtered.length,
     timestamp: new Date().toISOString()
   });
 });

@@ -350,117 +350,132 @@ export const RoundResults: React.FC<RoundResultsProps> = ({
                   </motion.div>
                 )}
 
-                {/* 2. NAVIGATION TABS: SHORTLIST & EXPLANATIONS */}
-                <div className="flex rounded-xl bg-[#050c1f] p-1 border border-gray-800 font-mono text-xs">
-                  <button
-                    onClick={() => setActiveTab('QUALIFIED_LIST')}
-                    className={`flex-1 py-2.5 rounded-lg font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors ${
-                      activeTab === 'QUALIFIED_LIST'
-                        ? 'bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/40 shadow-[0_0_10px_rgba(0,240,255,0.2)]'
-                        : 'text-gray-400 hover:text-white'
-                    }`}
-                  >
-                    <Users className="w-4 h-4" />
-                    <span>WHO QUALIFIED FOR ROUND 2 ({qualifiedList.length})</span>
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('EXPLANATIONS')}
-                    className={`flex-1 py-2.5 rounded-lg font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors ${
-                      activeTab === 'EXPLANATIONS'
-                        ? 'bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/40 shadow-[0_0_10px_rgba(0,240,255,0.2)]'
-                        : 'text-gray-400 hover:text-white'
-                    }`}
-                  >
-                    <Lightbulb className="w-4 h-4 text-amber-400" />
-                    <span>CORRECT ANSWERS &amp; EXPLANATIONS ({questions.length})</span>
-                  </button>
-                </div>
-
-                {/* TAB 1: WHO QUALIFIED FOR NEXT ROUND */}
-                {activeTab === 'QUALIFIED_LIST' && (
-                  <div className="p-5 rounded-2xl bg-[#050c1f] border border-gray-800 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Users className="w-4 h-4 text-[#00f0ff]" />
-                        <h3 className="text-xs font-mono font-bold text-white uppercase">
-                          Official Round 2 Shortlist · {participant?.department ? `${participant.department} Track` : 'All Departments'}
-                        </h3>
-                      </div>
-                      <span className="text-[11px] font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2.5 py-0.5 rounded-full">
-                        {qualifiedList.length} Qualified Teams
-                      </span>
-                    </div>
-
-                    {qualifiedList.length === 0 ? (
-                      <div className="py-8 text-center text-gray-500 font-mono text-xs space-y-2">
-                        <Users className="w-8 h-8 mx-auto opacity-30 text-gray-400" />
-                        <p>No candidates have been marked as qualified yet for this department.</p>
-                      </div>
-                    ) : (
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left font-mono text-xs">
-                          <thead>
-                            <tr className="text-gray-400 border-b border-gray-800 text-[10px] uppercase">
-                              <th className="py-2 px-2">#</th>
-                              <th className="py-2 px-3">Team / Candidate</th>
-                              <th className="py-2 px-3">Reg No</th>
-                              <th className="py-2 px-3">Dept</th>
-                              <th className="py-2 px-3">R1 Score</th>
-                              <th className="py-2 px-3">Status</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-gray-800/50">
-                            {qualifiedList.map((p, idx) => {
-                              const isCurrent = p.registerNumber === participant?.registerNumber;
-                              return (
-                                <tr
-                                  key={p.registerNumber || idx}
-                                  className={`hover:bg-white/5 transition-colors ${
-                                    isCurrent ? 'bg-[#00f0ff]/10 font-bold border-l-2 border-[#00f0ff]' : ''
-                                  }`}
-                                >
-                                  <td className="py-2.5 px-2 text-gray-400">{idx + 1}</td>
-                                  <td className="py-2.5 px-3 text-white">
-                                    <div className="flex items-center gap-1.5">
-                                      <span>{p.teamName || p.name}</span>
-                                      {isCurrent && (
-                                        <span className="px-1.5 py-0.2 rounded text-[9px] bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/40">
-                                          YOU
-                                        </span>
-                                      )}
-                                    </div>
-                                    {p.partnerName && (
-                                      <div className="text-[10px] text-gray-400 font-normal">
-                                        Partner: {p.partnerName}
-                                      </div>
-                                    )}
-                                  </td>
-                                  <td className="py-2.5 px-3 text-gray-400">{p.registerNumber}</td>
-                                  <td className="py-2.5 px-3 text-[#00f0ff]">{p.department}</td>
-                                  <td className="py-2.5 px-3 text-emerald-400 font-bold">
-                                    {p.round1Score ?? p.totalScore ?? '—'} / 15
-                                  </td>
-                                  <td className="py-2.5 px-3">
-                                    <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 inline-flex items-center gap-1">
-                                      <CheckCircle className="w-3 h-3 text-emerald-400" />
-                                      QUALIFIED
-                                    </span>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
+                {/* 2. TAB CONTROLS: SELECTED PARTICIPANTS VS BUG EXPLANATIONS */}
+                <div className="space-y-4">
+                  <div className="flex border-b border-gray-800 gap-2">
+                    <button
+                      onClick={() => {
+                        setActiveTab('QUALIFIED_LIST');
+                        soundManager.playBeep(480, 'sine', 0.02);
+                      }}
+                      className={`flex items-center gap-2 px-4 py-2.5 text-xs font-mono font-bold cursor-pointer transition-all border-b-2 ${
+                        activeTab === 'QUALIFIED_LIST'
+                          ? 'border-[#00f0ff] text-[#00f0ff] bg-[#00f0ff]/10'
+                          : 'border-transparent text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      <Users className="w-4 h-4" />
+                      <span>SELECTED CANDIDATES FOR ROUND 2 ({qualifiedList.length})</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setActiveTab('EXPLANATIONS');
+                        soundManager.playBeep(520, 'sine', 0.02);
+                      }}
+                      className={`flex items-center gap-2 px-4 py-2.5 text-xs font-mono font-bold cursor-pointer transition-all border-b-2 ${
+                        activeTab === 'EXPLANATIONS'
+                          ? 'border-[#00f0ff] text-[#00f0ff] bg-[#00f0ff]/10'
+                          : 'border-transparent text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      <Lightbulb className="w-4 h-4 text-amber-400" />
+                      <span>ROUND 1 BUG EXPLANATIONS ({questions.length})</span>
+                    </button>
                   </div>
-                )}
 
-                {/* TAB 2: ANSWER KEY & BUG EXPLANATIONS */}
-                {activeTab === 'EXPLANATIONS' && (
-                  <div className="space-y-4">
-                    {/* Filter Bar */}
-                    <div className="flex flex-wrap items-center justify-between gap-3 bg-[#050c1f] p-3 rounded-xl border border-gray-800">
+                  {activeTab === 'QUALIFIED_LIST' ? (
+                    /* SHORTLISTED PARTICIPANTS TABLE */
+                    <div className="space-y-3">
+                      <div className="p-4 bg-[#050c1f] rounded-2xl border border-emerald-500/30 space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 text-emerald-400 font-mono text-xs font-bold">
+                            <Sparkles className="w-4 h-4" />
+                            <span>OFFICIAL SHORTLIST — ADVANCING TO LEVEL 02: CODE REPAIR</span>
+                          </div>
+                          <span className="text-[11px] font-mono text-gray-400">
+                            {participant?.department ? `Track: ${participant.department} · ` : ''}{qualifiedList.length} Selected Candidates
+                          </span>
+                        </div>
+
+                        {qualifiedList.length === 0 ? (
+                          <div className="text-center py-8 text-gray-400 font-mono text-xs space-y-1">
+                            <p>No candidates have been shortlisted yet for this track.</p>
+                            <p className="text-[11px] text-gray-500">Evaluator shortlisting is in progress.</p>
+                          </div>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left font-mono text-xs">
+                              <thead>
+                                <tr className="border-b border-gray-800 text-gray-400 text-[10px] uppercase">
+                                  <th className="py-2.5 px-3">#</th>
+                                  <th className="py-2.5 px-3">Candidate / Team</th>
+                                  <th className="py-2.5 px-3">Reg No</th>
+                                  <th className="py-2.5 px-3">Track</th>
+                                  <th className="py-2.5 px-3 text-right">R1 Score</th>
+                                  <th className="py-2.5 px-3 text-center">Status</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-800/60">
+                                {qualifiedList.map((p, idx) => {
+                                  const isCurrent =
+                                    participant?.registerNumber &&
+                                    p.registerNumber?.toUpperCase() === participant.registerNumber.toUpperCase();
+
+                                  return (
+                                    <tr
+                                      key={p.id || p.registerNumber || idx}
+                                      className={`transition-colors ${
+                                        isCurrent
+                                          ? 'bg-emerald-500/15 border-l-2 border-emerald-400 font-bold'
+                                          : 'hover:bg-white/5'
+                                      }`}
+                                    >
+                                      <td className="py-2.5 px-3 text-gray-400">{idx + 1}</td>
+                                      <td className="py-2.5 px-3">
+                                        <div className="flex items-center gap-1.5">
+                                          <span className={isCurrent ? 'text-emerald-300' : 'text-white'}>
+                                            {p.teamName || p.name}
+                                          </span>
+                                          {isCurrent && (
+                                            <span className="px-1.5 py-0.2 rounded text-[9px] bg-emerald-400 text-black font-bold">
+                                              YOU
+                                            </span>
+                                          )}
+                                        </div>
+                                        {p.partnerName && (
+                                          <div className="text-[10px] text-gray-400">
+                                            Partner: {p.partnerName} ({p.partnerRegisterNumber || ''})
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td className="py-2.5 px-3 text-gray-300">{p.registerNumber}</td>
+                                      <td className="py-2.5 px-3">
+                                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-cyan-950 text-cyan-300 border border-cyan-800">
+                                          {p.department}
+                                        </span>
+                                      </td>
+                                      <td className="py-2.5 px-3 text-right text-emerald-400 font-bold">
+                                        {p.round1Score ?? 0}
+                                      </td>
+                                      <td className="py-2.5 px-3 text-center">
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-400/40">
+                                          <CheckCircle2 className="w-3 h-3" /> QUALIFIED
+                                        </span>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    /* CORRECT ANSWERS, BUG DIAGNOSIS & EXPLANATIONS */
+                    <div className="space-y-4">
+                      {/* Filter Bar */}
+                      <div className="flex flex-wrap items-center justify-between gap-3 bg-[#050c1f] p-3 rounded-xl border border-gray-800">
                       <div className="flex items-center gap-2">
                         <Filter className="w-3.5 h-3.5 text-gray-400" />
                         <div className="flex gap-1">
@@ -657,9 +672,10 @@ export const RoundResults: React.FC<RoundResultsProps> = ({
                   </div>
                 )}
               </div>
-            )}
-          </div>
-        ) : (
+            </div>
+          )}
+        </div>
+      ) : (
           /* ROUND 2 OR ROUND 3 RESULTS (ADVANCE / FINAL RESULTS + CODE EXPLANATIONS) */
           <div className="space-y-6">
             <div className="pt-2">
