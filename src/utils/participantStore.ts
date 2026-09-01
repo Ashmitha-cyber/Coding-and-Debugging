@@ -239,8 +239,25 @@ class ParticipantStore {
     return this.getCachedParticipants();
   }
 
-  // Fetch all participants
+  // Fetch all participants directly from central server (accessible by any PC / Admin panel)
   async fetchAllParticipants(): Promise<ParticipantRecord[]> {
+    try {
+      const res = await fetch('/api/participants', {
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache'
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.participants)) {
+          this.setLocalCache(data.participants);
+          return data.participants;
+        }
+      }
+    } catch (e) {
+      console.warn('Direct fetch from /api/participants failed, attempting sync', e);
+    }
     return this.syncWithServer();
   }
 
