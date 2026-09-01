@@ -20,6 +20,7 @@ if (!fs.existsSync(DATA_DIR)) {
 }
 
 const PARTICIPANTS_FILE = path.join(DATA_DIR, 'participants.json');
+const DELETED_FILE = path.join(DATA_DIR, 'deleted_participants.json');
 const CONCLUSIONS_FILE = path.join(DATA_DIR, 'conclusions.json');
 const QUESTIONS_FILE = path.join(DATA_DIR, 'custom_questions.json');
 
@@ -166,6 +167,7 @@ function saveJsonFile(filePath: string, data: any) {
 
 // In-Memory state caches
 let participants: any[] = loadJsonFile(PARTICIPANTS_FILE, DEFAULT_INITIAL_PARTICIPANTS);
+let deletedParticipants: string[] = loadJsonFile(DELETED_FILE, []);
 let conclusions: Record<string, boolean> = loadJsonFile(CONCLUSIONS_FILE, {
   IT: false,
   AIDS: false,
@@ -177,6 +179,9 @@ let customQuestions: any[] = loadJsonFile(QUESTIONS_FILE, []);
 // Save initial file if not present
 if (!fs.existsSync(PARTICIPANTS_FILE)) {
   saveJsonFile(PARTICIPANTS_FILE, participants);
+}
+if (!fs.existsSync(DELETED_FILE)) {
+  saveJsonFile(DELETED_FILE, deletedParticipants);
 }
 if (!fs.existsSync(CONCLUSIONS_FILE)) {
   saveJsonFile(CONCLUSIONS_FILE, conclusions);
@@ -205,9 +210,20 @@ app.post('/api/participants/sync', (req, res) => {
       for (const local of localParticipants) {
         if (!local || (!local.registerNumber && !local.id)) continue;
         const regNo = (local.registerNumber || '').toUpperCase().trim();
+        const localId = local.id || '';
+
+        // Tombstone check: If participant was explicitly deleted, do NOT resurrect it!
+        if (
+          (regNo && deletedParticipants.includes(regNo)) ||
+          (localId && deletedParticipants.includes(localId))
+        ) {
+          continue;
+        }
 
         const index = participants.findIndex(
-          (p) => (p.registerNumber && p.registerNumber.toUpperCase() === regNo) || (local.id && p.id === local.id)
+          (p) =>
+            (regNo && p.registerNumber && p.registerNumber.toUpperCase() === regNo) ||
+            (localId && p.id === localId)
         );
 
         if (index >= 0) {
@@ -309,8 +325,21 @@ app.post('/api/participants', (req, res) => {
     }
 
     const regNo = (record.registerNumber || '').toUpperCase().trim();
+    const recordId = record.id || '';
+
+    // Un-blacklist if re-registering or explicitly updating
+    if (regNo || recordId) {
+      const prevLen = deletedParticipants.length;
+      deletedParticipants = deletedParticipants.filter(
+        (id) => id !== regNo && id !== recordId
+      );
+      if (deletedParticipants.length !== prevLen) {
+        saveJsonFile(DELETED_FILE, deletedParticipants);
+      }
+    }
+
     const existingIndex = participants.findIndex(
-      (p) => (p.registerNumber && p.registerNumber.toUpperCase() === regNo) || (record.id && p.id === record.id)
+      (p) => (regNo && p.registerNumber && p.registerNumber.toUpperCase() === regNo) || (recordId && p.id === recordId)
     );
 
     if (existingIndex >= 0) {
@@ -355,13 +384,23 @@ app.post('/api/participants', (req, res) => {
   }
 });
 
-// PUT update participant details (by registerNumber)
-app.put('/api/participants/:regNo', (req, res) => {
+// PUT update participant details (by registerNumber or id)
+app.put('/api/participants/:idOrRegNo', (req, res) => {
   try {
-    const targetRegNo = req.params.regNo.toUpperCase().trim();
+    const rawTarget = decodeURIComponent(req.params.idOrRegNo || '').trim();
+    const targetUpper = rawTarget.toUpperCase();
     const updates = req.body;
+
+    // Un-blacklist if updating
+    deletedParticipants = deletedParticipants.filter(
+      (id) => id !== targetUpper && id !== rawTarget
+    );
+    saveJsonFile(DELETED_FILE, deletedParticipants);
+
     const index = participants.findIndex(
-      (p) => p.registerNumber && p.registerNumber.toUpperCase() === targetRegNo
+      (p) =>
+        (p.registerNumber && p.registerNumber.toUpperCase() === targetUpper) ||
+        (p.id && p.id === rawTarget)
     );
 
     if (index === -1) {
@@ -369,7 +408,7 @@ app.put('/api/participants/:regNo', (req, res) => {
       const newRecord = {
         id: updates.id || `P-${Date.now()}`,
         ...updates,
-        registerNumber: targetRegNo,
+        registerNumber: updates.registerNumber || targetUpper,
         updatedAt: new Date().toISOString()
       };
       participants.unshift(newRecord);
@@ -395,18 +434,41 @@ app.put('/api/participants/:regNo', (req, res) => {
   }
 });
 
-// DELETE participant
-app.delete('/api/participants/:regNo', (req, res) => {
+// DELETE participant (by registerNumber OR id)
+app.delete('/api/participants/:idOrRegNo', (req, res) => {
   try {
-    const targetRegNo = req.params.regNo.toUpperCase().trim();
-    participants = participants.filter(
-      (p) => p.registerNumber && p.registerNumber.toUpperCase() !== targetRegNo
+    const rawTarget = decodeURIComponent(req.params.idOrRegNo || '').trim();
+    const targetUpper = rawTarget.toUpperCase();
+
+    const toDelete = participants.filter(
+      (p) =>
+        (p.registerNumber && p.registerNumber.toUpperCase() === targetUpper) ||
+        (p.id && p.id === rawTarget) ||
+        (p.id && p.id.toUpperCase() === targetUpper)
     );
+
+    participants = participants.filter(
+      (p) =>
+        (!p.registerNumber || p.registerNumber.toUpperCase() !== targetUpper) &&
+        p.id !== rawTarget &&
+        (!p.id || p.id.toUpperCase() !== targetUpper)
+    );
+
+    // Record tombstones so background multi-PC syncs do not resurrect this record
+    toDelete.forEach((p) => {
+      if (p.registerNumber) deletedParticipants.push(p.registerNumber.toUpperCase());
+      if (p.id) deletedParticipants.push(p.id);
+    });
+    if (targetUpper) deletedParticipants.push(targetUpper);
+    if (rawTarget) deletedParticipants.push(rawTarget);
+    deletedParticipants = Array.from(new Set(deletedParticipants));
+
     saveJsonFile(PARTICIPANTS_FILE, participants);
+    saveJsonFile(DELETED_FILE, deletedParticipants);
 
     return res.json({
       success: true,
-      deletedRegNo: targetRegNo,
+      deleted: rawTarget,
       participants
     });
   } catch (err: any) {
@@ -434,11 +496,40 @@ app.post('/api/participants/clear-dept', (req, res) => {
   try {
     const { department } = req.body;
     if (department) {
+      const removed = participants.filter((p) => p.department === department);
       participants = participants.filter((p) => p.department !== department);
+
+      removed.forEach((p) => {
+        if (p.registerNumber) deletedParticipants.push(p.registerNumber.toUpperCase());
+        if (p.id) deletedParticipants.push(p.id);
+      });
+      deletedParticipants = Array.from(new Set(deletedParticipants));
+
       saveJsonFile(PARTICIPANTS_FILE, participants);
+      saveJsonFile(DELETED_FILE, deletedParticipants);
+
       return res.json({ success: true, clearedDept: department, participants });
     }
     return res.status(400).json({ success: false, error: 'Department code required' });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST clear all participants across all departments
+app.post('/api/participants/clear-all', (req, res) => {
+  try {
+    participants.forEach((p) => {
+      if (p.registerNumber) deletedParticipants.push(p.registerNumber.toUpperCase());
+      if (p.id) deletedParticipants.push(p.id);
+    });
+    participants = [];
+    deletedParticipants = Array.from(new Set(deletedParticipants));
+
+    saveJsonFile(PARTICIPANTS_FILE, participants);
+    saveJsonFile(DELETED_FILE, deletedParticipants);
+
+    return res.json({ success: true, participants: [] });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
   }

@@ -114,6 +114,16 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
   const [notification, setNotification] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
+  // In-App Confirmation Modal State (Reliable across all browsers and sandboxed iframes)
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmText: string;
+    isDanger?: boolean;
+    onConfirm: () => Promise<void> | void;
+  } | null>(null);
+
   // Questions State
   const [questions, setQuestions] = useState<Question[]>([]);
   const [selectedRoundFilter, setSelectedRoundFilter] = useState<number>(0);
@@ -137,23 +147,46 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
       loadQuestions();
       loadAllConclusions();
 
-      // Poll every 2 seconds while admin modal is open to pick up participants registering on other PCs
+      // Poll every 3 seconds while admin modal is open to pick up participants registering on other PCs
       const interval = setInterval(() => {
-        loadParticipants();
-        loadAllConclusions();
-      }, 2000);
+        participantStore.fetchAllParticipants();
+        participantStore.fetchConclusions();
+      }, 3000);
 
-      const handleUpdate = () => {
-        loadParticipants();
-        loadAllConclusions();
+      const handleUpdate = (e: any) => {
+        if (e && e.detail && Array.isArray(e.detail)) {
+          setParticipants(e.detail);
+        } else {
+          setParticipants(participantStore.getCachedParticipants());
+        }
       };
+
+      const handleConclusionUpdate = (e: any) => {
+        if (e && e.detail) {
+          setDeptConclusion({
+            IT: !!e.detail.IT,
+            AIDS: !!e.detail.AIDS,
+            CSBS: !!e.detail.CSBS
+          });
+          setIsGlobalConcluded(!!e.detail.global);
+        } else {
+          const state = participantStore.getCachedConclusions();
+          setDeptConclusion({
+            IT: state.IT,
+            AIDS: state.AIDS,
+            CSBS: state.CSBS
+          });
+          setIsGlobalConcluded(state.global);
+        }
+      };
+
       window.addEventListener('triquetra_participants_updated', handleUpdate);
-      window.addEventListener('triquetra_round1_concluded_event', handleUpdate);
+      window.addEventListener('triquetra_round1_concluded_event', handleConclusionUpdate);
 
       return () => {
         clearInterval(interval);
         window.removeEventListener('triquetra_participants_updated', handleUpdate);
-        window.removeEventListener('triquetra_round1_concluded_event', handleUpdate);
+        window.removeEventListener('triquetra_round1_concluded_event', handleConclusionUpdate);
       };
     }
   }, [isOpen, isAuthenticated]);
@@ -380,7 +413,27 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
     showNotice(select ? `Selected all teams in ${DEPARTMENTS[dept].shortName}.` : `Deselected all in ${DEPARTMENTS[dept].shortName}.`);
   };
 
-  // Delete participant
+  // Delete participant with confirmation dialog
+  const requestDeleteParticipant = (p: ParticipantRecord) => {
+    const regOrId = p.registerNumber || p.id;
+    const nameStr = p.name || 'Candidate';
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Participant Record?',
+      message: `Are you sure you want to permanently delete ${nameStr} (${regOrId}) from ${DEPARTMENTS[p.department]?.shortName || p.department}? This immediately synchronizes and purges their record from all connected workstations.`,
+      confirmText: 'Delete Record',
+      isDanger: true,
+      onConfirm: async () => {
+        await participantStore.deleteParticipant(regOrId);
+        await loadParticipants();
+        soundManager.playBeep(350, 'square', 0.05);
+        showNotice(`Removed participant (${regOrId})`);
+        setConfirmModal(null);
+      }
+    });
+  };
+
+  // Direct fast delete (for backward-compatibility or single-click actions)
   const handleDeleteParticipant = async (regNo: string) => {
     await participantStore.deleteParticipant(regNo);
     await loadParticipants();
@@ -389,14 +442,40 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
     showNotice(`Removed participant (${regNo})`);
   };
 
-  // Clear department database
-  const handleClearDepartment = async (dept: Department) => {
-    if (window.confirm(`Are you sure you want to clear all participant records in ${DEPARTMENTS[dept].name}?`)) {
-      await participantStore.clearDepartment(dept);
-      await loadParticipants();
-      soundManager.playWarning();
-      showNotice(`Cleared ${DEPARTMENTS[dept].shortName} database.`);
-    }
+  // Clear department database with confirmation dialog
+  const handleClearDepartment = (dept: Department) => {
+    setConfirmModal({
+      isOpen: true,
+      title: `Clear ${DEPARTMENTS[dept].shortName} Database?`,
+      message: `Are you sure you want to clear all participant records in ${DEPARTMENTS[dept].name}? All scores, qualification states, and timers for this track will be purged across all workstations.`,
+      confirmText: `Clear ${DEPARTMENTS[dept].shortName} Track`,
+      isDanger: true,
+      onConfirm: async () => {
+        await participantStore.clearDepartment(dept);
+        await loadParticipants();
+        soundManager.playWarning();
+        showNotice(`Cleared ${DEPARTMENTS[dept].shortName} database.`);
+        setConfirmModal(null);
+      }
+    });
+  };
+
+  // Clear all tournament records
+  const handleClearAllTournament = () => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Clear All Tournament Records?',
+      message: 'Are you sure you want to clear all participant records across ALL departments (IT, AI&DS, CSBS)? This action is permanent and synchronizes immediately to all connected PCs.',
+      confirmText: 'Purge All Records',
+      isDanger: true,
+      onConfirm: async () => {
+        await participantStore.clearAllParticipants();
+        await loadParticipants();
+        soundManager.playWarning();
+        showNotice('Purged all tournament participant records across all tracks.');
+        setConfirmModal(null);
+      }
+    });
   };
 
   // Add sample team in department
@@ -537,21 +616,40 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
   };
 
   const handleDeleteQuestion = (id: number) => {
-    if (window.confirm(`Delete question ID #${id}?`)) {
-      questionStore.deleteQuestion(id);
-      loadQuestions();
-      soundManager.playBeep(350, 'square', 0.05);
-      showNotice(`Deleted question #${id}`);
-    }
+    const targetQ = questions.find((q) => q.id === id);
+    const titleStr = targetQ ? `"${targetQ.title}"` : `#${id}`;
+
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Question?',
+      message: `Are you sure you want to delete Question ${titleStr} from the challenge bank?`,
+      confirmText: 'Delete Question',
+      isDanger: true,
+      onConfirm: () => {
+        questionStore.deleteQuestion(id);
+        loadQuestions();
+        soundManager.playBeep(350, 'square', 0.05);
+        showNotice(`Deleted question #${id}`);
+        setConfirmModal(null);
+      }
+    });
   };
 
   const handleResetQuestions = () => {
-    if (window.confirm('Reset all questions to the official 45 arena challenges?')) {
-      questionStore.resetToDefaults();
-      loadQuestions();
-      soundManager.playWarning();
-      showNotice('Questions reset to official defaults.');
-    }
+    setConfirmModal({
+      isOpen: true,
+      title: 'Reset Challenge Bank?',
+      message: 'Are you sure you want to reset all questions to the official 45 arena challenges across Rounds 1, 2, and 3?',
+      confirmText: 'Reset to Defaults',
+      isDanger: false,
+      onConfirm: () => {
+        questionStore.resetToDefaults();
+        loadQuestions();
+        soundManager.playWarning();
+        showNotice('Questions reset to official defaults.');
+        setConfirmModal(null);
+      }
+    });
   };
 
   // Helper to get ranked list for a department or all
@@ -1207,7 +1305,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
                                       <Edit3 className="w-3.5 h-3.5" />
                                     </button>
                                     <button
-                                      onClick={() => handleDeleteParticipant(p.registerNumber)}
+                                      onClick={() => requestDeleteParticipant(p)}
                                       className="p-1 rounded hover:bg-red-900/50 text-gray-500 hover:text-red-400 cursor-pointer transition-colors"
                                       title="Delete Record"
                                     >
@@ -1309,6 +1407,13 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
                     >
                       <Download className="w-3.5 h-3.5" /> Export All Data (CSV)
                     </button>
+                    <button
+                      onClick={handleClearAllTournament}
+                      className="px-3 py-2 rounded-xl bg-red-950/40 hover:bg-red-900/60 text-red-300 font-mono text-xs flex items-center gap-1.5 cursor-pointer border border-red-500/30"
+                      title="Purge all participant records across all 3 tracks"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" /> Clear All Records
+                    </button>
                   </div>
                 </div>
 
@@ -1395,7 +1500,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
                                     <Edit3 className="w-3.5 h-3.5" />
                                   </button>
                                   <button
-                                    onClick={() => handleDeleteParticipant(p.registerNumber)}
+                                    onClick={() => requestDeleteParticipant(p)}
                                     className="p-1 rounded hover:bg-red-900/50 text-gray-500 hover:text-red-400 cursor-pointer transition-colors"
                                     title="Delete Record"
                                   >
@@ -1585,6 +1690,55 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
           }}
           onSave={handleSaveParticipantRecord}
         />
+      )}
+
+      {/* Universal In-App Confirmation Modal */}
+      {confirmModal && confirmModal.isOpen && (
+        <div className="fixed inset-0 z-[120] bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-[#071126] border border-gray-700/80 rounded-2xl p-6 shadow-[0_0_50px_rgba(0,0,0,0.8)] animate-in fade-in zoom-in duration-150">
+            <div className="flex items-start gap-4">
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                confirmModal.isDanger 
+                  ? 'bg-red-500/20 text-red-400 border border-red-500/40' 
+                  : 'bg-[#00f0ff]/20 text-[#00f0ff] border border-[#00f0ff]/40'
+              }`}>
+                {confirmModal.isDanger ? <Trash2 className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base font-bold font-mono text-white tracking-wide">
+                  {confirmModal.title}
+                </h3>
+                <p className="mt-2 text-xs text-gray-300 leading-relaxed">
+                  {confirmModal.message}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-3 pt-4 border-t border-gray-800">
+              <button
+                type="button"
+                onClick={() => setConfirmModal(null)}
+                className="px-4 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 font-mono text-xs cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  await confirmModal.onConfirm();
+                }}
+                className={`px-5 py-2 rounded-xl font-mono text-xs font-bold cursor-pointer transition-all active:scale-95 flex items-center gap-2 ${
+                  confirmModal.isDanger
+                    ? 'bg-red-600 hover:bg-red-500 text-white shadow-[0_0_20px_rgba(239,68,68,0.4)]'
+                    : 'bg-[#00f0ff] hover:bg-[#38bdf8] text-black shadow-[0_0_20px_rgba(0,240,255,0.4)]'
+                }`}
+              >
+                {confirmModal.isDanger && <Trash2 className="w-3.5 h-3.5" />}
+                <span>{confirmModal.confirmText}</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
