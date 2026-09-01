@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { GamePhase, QuestionAnswerState, RoundResult, ParticipantInfo, Department, Question, ParticipantRecord } from './types';
-import { LEVEL_CONFIGS } from './data/questions';
+import { LEVEL_CONFIGS, QUESTIONS } from './data/questions';
 import { questionStore } from './utils/questionStore';
 import { participantStore } from './utils/participantStore';
 import { shuffleArray } from './utils/shuffle';
@@ -460,6 +460,8 @@ export default function App() {
         <FinalResults
           roundResults={roundResults}
           participant={participant}
+          answers={answers}
+          questions={QUESTIONS}
           onRestart={handleRestartExpedition}
         />
       )}
