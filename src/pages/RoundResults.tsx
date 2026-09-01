@@ -694,155 +694,199 @@ export const RoundResults: React.FC<RoundResultsProps> = ({
             {/* Answer Key & Bug Explanations for Round 2 & Round 3 */}
             {questions.length > 0 && (
               <div className="space-y-4 pt-4 border-t border-gray-800">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div className="flex items-center gap-2 font-mono text-xs font-bold text-white uppercase">
                     <Lightbulb className="w-4 h-4 text-amber-400" />
-                    <span>Level 0{round} Answer Key &amp; Explanations</span>
+                    <span>Level 0{round} Answer Key &amp; Explanations ({filteredQuestions.length})</span>
                   </div>
-                  <div className="flex gap-2 font-mono text-[11px]">
-                    <button
-                      onClick={expandAll}
-                      className="text-gray-400 hover:text-[#00f0ff] underline cursor-pointer"
-                    >
-                      Expand All
-                    </button>
-                    <span className="text-gray-600">·</span>
-                    <button
-                      onClick={collapseAll}
-                      className="text-gray-400 hover:text-[#00f0ff] underline cursor-pointer"
-                    >
-                      Collapse All
-                    </button>
+
+                  <div className="flex items-center gap-3">
+                    {/* Filter Pills */}
+                    <div className="flex rounded-lg bg-black/40 p-0.5 border border-gray-800 font-mono text-[10px]">
+                      <button
+                        onClick={() => setQuestionFilter('ALL')}
+                        className={`px-2 py-0.5 rounded cursor-pointer transition-colors ${
+                          questionFilter === 'ALL'
+                            ? 'bg-[#00f0ff]/20 text-[#00f0ff] font-bold border border-[#00f0ff]/40'
+                            : 'text-gray-400 hover:text-white'
+                        }`}
+                      >
+                        ALL ({questions.length})
+                      </button>
+                      <button
+                        onClick={() => setQuestionFilter('CORRECT')}
+                        className={`px-2 py-0.5 rounded cursor-pointer transition-colors ${
+                          questionFilter === 'CORRECT'
+                            ? 'bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/40'
+                            : 'text-gray-400 hover:text-emerald-300'
+                        }`}
+                      >
+                        CORRECT ({questions.filter((q) => answers[q.id]?.isCorrect).length})
+                      </button>
+                      <button
+                        onClick={() => setQuestionFilter('INCORRECT')}
+                        className={`px-2 py-0.5 rounded cursor-pointer transition-colors ${
+                          questionFilter === 'INCORRECT'
+                            ? 'bg-red-500/20 text-red-300 font-bold border border-red-500/40'
+                            : 'text-gray-400 hover:text-red-300'
+                        }`}
+                      >
+                        MISSED ({questions.filter((q) => !answers[q.id]?.isCorrect).length})
+                      </button>
+                    </div>
+
+                    <div className="flex gap-2 font-mono text-[11px]">
+                      <button
+                        onClick={expandAll}
+                        className="text-gray-400 hover:text-[#00f0ff] underline cursor-pointer"
+                      >
+                        Expand All
+                      </button>
+                      <span className="text-gray-600">·</span>
+                      <button
+                        onClick={collapseAll}
+                        className="text-gray-400 hover:text-[#00f0ff] underline cursor-pointer"
+                      >
+                        Collapse All
+                      </button>
+                    </div>
                   </div>
                 </div>
 
                 <div className="space-y-3">
-                  {questions.map((q, idx) => {
-                    const state = answers[q.id];
-                    const isCorrect = state?.isCorrect ?? false;
-                    const userCode = state?.code || q.brokenCode;
-                    const isExpanded = !!expandedQuestionIds[q.id];
+                  {filteredQuestions.length === 0 ? (
+                    <div className="py-6 text-center text-gray-500 font-mono text-xs">
+                      No questions match the selected filter.
+                    </div>
+                  ) : (
+                    filteredQuestions.map((q) => {
+                      const state = answers[q.id];
+                      const isCorrect = state?.isCorrect ?? false;
+                      const userCode = state?.code || q.brokenCode;
+                      const isExpanded = !!expandedQuestionIds[q.id];
+                      const originalIndex = questions.findIndex(orig => orig.id === q.id);
 
-                    return (
-                      <div
-                        key={q.id}
-                        className={`rounded-2xl border transition-all ${
-                          isCorrect
-                            ? 'bg-[#050c1f] border-emerald-500/30'
-                            : 'bg-[#050c1f] border-red-500/30'
-                        }`}
-                      >
+                      return (
                         <div
-                          onClick={() => toggleQuestionExpand(q.id)}
-                          className="p-4 flex items-center justify-between cursor-pointer select-none hover:bg-white/5 rounded-2xl transition-colors"
+                          key={q.id}
+                          className={`rounded-2xl border transition-all ${
+                            isCorrect
+                              ? 'bg-[#050c1f] border-emerald-500/30'
+                              : 'bg-[#050c1f] border-red-500/30'
+                          }`}
                         >
-                          <div className="flex items-center gap-3">
-                            <div
-                              className={`w-7 h-7 rounded-lg flex items-center justify-center font-mono text-xs font-bold ${
-                                isCorrect
-                                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-400/40'
-                                  : 'bg-red-500/20 text-red-400 border border-red-400/40'
-                              }`}
-                            >
-                              {isCorrect ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                          <div
+                            onClick={() => toggleQuestionExpand(q.id)}
+                            className="p-4 flex items-center justify-between cursor-pointer select-none hover:bg-white/5 rounded-2xl transition-colors"
+                          >
+                            <div className="flex items-center gap-3">
+                              <div
+                                className={`w-7 h-7 rounded-lg flex items-center justify-center font-mono text-xs font-bold ${
+                                  isCorrect
+                                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-400/40'
+                                    : 'bg-red-500/20 text-red-400 border border-red-400/40'
+                                }`}
+                              >
+                                {isCorrect ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono text-xs font-bold text-gray-400">
+                                    Q{((originalIndex >= 0 ? originalIndex : 0) + 1).toString().padStart(2, '0')}
+                                  </span>
+                                  <h4 className="font-mono text-xs font-bold text-white">
+                                    {q.title}
+                                  </h4>
+                                </div>
+                                <div className="text-[10px] font-mono text-gray-400 flex items-center gap-2 mt-0.5">
+                                  <span>{q.category}</span>
+                                  <span>·</span>
+                                  <span className="uppercase text-[#00f0ff]">{q.language}</span>
+                                </div>
+                              </div>
                             </div>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <span className="font-mono text-xs font-bold text-gray-400">
-                                  Q{(idx + 1).toString().padStart(2, '0')}
-                                </span>
-                                <h4 className="font-mono text-xs font-bold text-white">
-                                  {q.title}
-                                </h4>
-                              </div>
-                              <div className="text-[10px] font-mono text-gray-400 flex items-center gap-2 mt-0.5">
-                                <span>{q.category}</span>
-                                <span>·</span>
-                                <span className="uppercase text-[#00f0ff]">{q.language}</span>
-                              </div>
+
+                            <div className="flex items-center gap-3">
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${
+                                  isCorrect
+                                    ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/40'
+                                    : 'bg-red-950/80 text-red-300 border border-red-500/40'
+                                }`}
+                              >
+                                {isCorrect ? 'RESOLVED' : 'MISSED / BUGGY'}
+                              </span>
+                              {isExpanded ? (
+                                <ChevronUp className="w-4 h-4 text-gray-400" />
+                              ) : (
+                                <ChevronDown className="w-4 h-4 text-gray-400" />
+                              )}
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-3">
-                            <span
-                              className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${
-                                isCorrect
-                                  ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/40'
-                                  : 'bg-red-950/80 text-red-300 border border-red-500/40'
-                              }`}
-                            >
-                              {isCorrect ? 'RESOLVED' : 'MISSED / BUGGY'}
-                            </span>
-                            {isExpanded ? (
-                              <ChevronUp className="w-4 h-4 text-gray-400" />
-                            ) : (
-                              <ChevronDown className="w-4 h-4 text-gray-400" />
+                          <AnimatePresence>
+                            {isExpanded && (
+                              <motion.div
+                                initial={{ opacity: 0, height: 0 }}
+                                animate={{ opacity: 1, height: 'auto' }}
+                                exit={{ opacity: 0, height: 0 }}
+                                className="px-4 pb-4 pt-1 space-y-3 border-t border-gray-800 text-xs font-mono"
+                              >
+                                <div className="text-gray-300 text-[11px] leading-relaxed pt-2">
+                                  <span className="text-[#00f0ff] font-bold">TASK: </span>
+                                  {q.description}
+                                </div>
+
+                                {q.expectedOutput && (
+                                  <div className="p-2.5 rounded-lg bg-[#0c1324] border border-gray-800 text-[11px]">
+                                    <span className="text-gray-400">Target Output: </span>
+                                    <code className="text-emerald-300 font-bold">{q.expectedOutput}</code>
+                                  </div>
+                                )}
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                                  <div className="space-y-1">
+                                    <div className="text-[10px] text-gray-400 uppercase font-bold">
+                                      Your Submission:
+                                    </div>
+                                    <pre className={`p-3 rounded-xl overflow-x-auto text-[11px] leading-relaxed ${
+                                      isCorrect
+                                        ? 'bg-emerald-950/20 border border-emerald-500/30 text-emerald-100'
+                                        : 'bg-red-950/20 border border-red-500/30 text-red-100'
+                                    }`}>
+                                      <code>{userCode}</code>
+                                    </pre>
+                                  </div>
+
+                                  <div className="space-y-1">
+                                    <div className="text-[10px] text-emerald-400 uppercase font-bold flex items-center gap-1">
+                                      <CheckCircle className="w-3 h-3 text-emerald-400" />
+                                      <span>Official Correct Code:</span>
+                                    </div>
+                                    <pre className="p-3 rounded-xl bg-[#031c15]/90 border border-emerald-500/40 text-emerald-200 overflow-x-auto text-[11px] leading-relaxed">
+                                      <code>{q.expectedAnswer}</code>
+                                    </pre>
+                                  </div>
+                                </div>
+
+                                {q.explanation && (
+                                  <div className="p-3 rounded-xl bg-amber-950/30 border border-amber-500/40 space-y-1 text-[11px]">
+                                    <div className="flex items-center gap-1.5 text-amber-300 font-bold uppercase text-[10px]">
+                                      <Lightbulb className="w-3.5 h-3.5 text-amber-400" />
+                                      <span>Bug Diagnosis &amp; Fix Explanation</span>
+                                    </div>
+                                    <p className="text-amber-100/90 leading-relaxed">
+                                      {q.explanation}
+                                    </p>
+                                  </div>
+                                )}
+                              </motion.div>
                             )}
-                          </div>
+                          </AnimatePresence>
                         </div>
-
-                        <AnimatePresence>
-                          {isExpanded && (
-                            <motion.div
-                              initial={{ opacity: 0, height: 0 }}
-                              animate={{ opacity: 1, height: 'auto' }}
-                              exit={{ opacity: 0, height: 0 }}
-                              className="px-4 pb-4 pt-1 space-y-3 border-t border-gray-800 text-xs font-mono"
-                            >
-                              <div className="text-gray-300 text-[11px] leading-relaxed pt-2">
-                                <span className="text-[#00f0ff] font-bold">TASK: </span>
-                                {q.description}
-                              </div>
-
-                              {q.expectedOutput && (
-                                <div className="p-2.5 rounded-lg bg-[#0c1324] border border-gray-800 text-[11px]">
-                                  <span className="text-gray-400">Target Output: </span>
-                                  <code className="text-emerald-300 font-bold">{q.expectedOutput}</code>
-                                </div>
-                              )}
-
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
-                                <div className="space-y-1">
-                                  <div className="text-[10px] text-gray-400 uppercase font-bold">
-                                    Your Submission:
-                                  </div>
-                                  <pre className={`p-3 rounded-xl overflow-x-auto text-[11px] leading-relaxed ${
-                                    isCorrect
-                                      ? 'bg-emerald-950/20 border border-emerald-500/30 text-emerald-100'
-                                      : 'bg-red-950/20 border border-red-500/30 text-red-100'
-                                  }`}>
-                                    <code>{userCode}</code>
-                                  </pre>
-                                </div>
-
-                                <div className="space-y-1">
-                                  <div className="text-[10px] text-emerald-400 uppercase font-bold flex items-center gap-1">
-                                    <CheckCircle className="w-3 h-3 text-emerald-400" />
-                                    <span>Official Correct Code:</span>
-                                  </div>
-                                  <pre className="p-3 rounded-xl bg-[#031c15]/90 border border-emerald-500/40 text-emerald-200 overflow-x-auto text-[11px] leading-relaxed">
-                                    <code>{q.expectedAnswer}</code>
-                                  </pre>
-                                </div>
-                              </div>
-
-                              {q.explanation && (
-                                <div className="p-3 rounded-xl bg-amber-950/30 border border-amber-500/40 space-y-1 text-[11px]">
-                                  <div className="flex items-center gap-1.5 text-amber-300 font-bold uppercase text-[10px]">
-                                    <Lightbulb className="w-3.5 h-3.5 text-amber-400" />
-                                    <span>Bug Diagnosis &amp; Fix Explanation</span>
-                                  </div>
-                                  <p className="text-amber-100/90 leading-relaxed">
-                                    {q.explanation}
-                                  </p>
-                                </div>
-                              )}
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                      </div>
-                    );
-                  })}
+                      );
+                    })
+                  )}
                 </div>
               </div>
             )}
