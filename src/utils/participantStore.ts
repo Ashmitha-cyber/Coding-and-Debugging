@@ -23,6 +23,22 @@ export interface ConclusionsState {
   global: boolean;
 }
 
+// Strip undefined fields because Firestore rejects undefined property values
+function sanitizeForFirestore<T extends Record<string, any>>(obj: T): Record<string, any> {
+  const clean: Record<string, any> = {};
+  for (const key of Object.keys(obj)) {
+    const val = obj[key];
+    if (val !== undefined) {
+      if (val !== null && typeof val === 'object' && !Array.isArray(val)) {
+        clean[key] = sanitizeForFirestore(val);
+      } else {
+        clean[key] = val;
+      }
+    }
+  }
+  return clean;
+}
+
 function safeDocId(regNo: string, fallbackId?: string): string {
   const base = regNo ? regNo.trim().toUpperCase() : fallbackId || `ID_${Date.now()}`;
   return base.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -33,7 +49,7 @@ class ParticipantStore {
   private isSyncing = false;
   private firestoreParticipantsUnsub: Unsubscribe | null = null;
   private firestoreConclusionsUnsub: Unsubscribe | null = null;
-  private firestoreAvailable = true;
+  public firestoreConnected = false;
 
   constructor() {
     this.initFirestoreListeners();
@@ -42,40 +58,48 @@ class ParticipantStore {
   // Real-time Firestore snapshot listeners across all PCs
   private initFirestoreListeners() {
     try {
-      if (!db) return;
+      if (!db) {
+        console.warn('Firestore instance not initialized.');
+        return;
+      }
 
-      // 1. Live Real-time listener for all participants
+      // 1. Live Real-time listener for all participants across all computers
       const participantsCol = collection(db, 'participants');
       this.firestoreParticipantsUnsub = onSnapshot(
         participantsCol,
         (snapshot) => {
-          if (!snapshot.empty) {
-            const firestoreList: ParticipantRecord[] = [];
-            snapshot.forEach((docSnap) => {
-              const data = docSnap.data() as ParticipantRecord;
-              if (data && data.registerNumber) {
-                firestoreList.push(data);
-              }
-            });
+          this.firestoreConnected = true;
+          const firestoreList: ParticipantRecord[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data() as ParticipantRecord;
+            if (data && data.registerNumber) {
+              firestoreList.push(data);
+            }
+          });
 
-            if (firestoreList.length > 0) {
-              // Merge with local cache & update
-              const cached = this.getCachedParticipants();
-              const map = new Map<string, ParticipantRecord>();
-              cached.forEach(p => map.set(p.registerNumber.toUpperCase(), p));
-              firestoreList.forEach(p => map.set(p.registerNumber.toUpperCase(), p));
-              const merged = Array.from(map.values());
-              this.setLocalCache(merged);
+          if (firestoreList.length > 0) {
+            // Merge with local cache & update
+            const cached = this.getCachedParticipants();
+            const map = new Map<string, ParticipantRecord>();
+            cached.forEach((p) => map.set(p.registerNumber.toUpperCase(), p));
+            firestoreList.forEach((p) => map.set(p.registerNumber.toUpperCase(), p));
+            const merged = Array.from(map.values());
+            this.setLocalCache(merged);
+          } else {
+            // If firestore is empty, seed local participants into Firestore
+            const cached = this.getCachedParticipants();
+            if (cached.length > 0) {
+              this.seedToFirestore(cached);
             }
           }
         },
         (error) => {
-          console.warn('Firestore live listener notice (falling back to server sync):', error.message);
-          this.firestoreAvailable = false;
+          console.warn('Firestore snapshot notice (syncing via central server):', error.message);
+          this.firestoreConnected = false;
         }
       );
 
-      // 2. Live listener for system state & conclusions
+      // 2. Live listener for system state & round conclusions
       const conclusionsDoc = doc(db, 'system_state', 'conclusions');
       this.firestoreConclusionsUnsub = onSnapshot(
         conclusionsDoc,
@@ -92,12 +116,28 @@ class ParticipantStore {
           }
         },
         (err) => {
-          console.warn('Firestore conclusions notice:', err.message);
+          console.warn('Firestore conclusions listener notice:', err.message);
         }
       );
     } catch (e) {
-      console.warn('Could not attach Firestore live listeners:', e);
-      this.firestoreAvailable = false;
+      console.warn('Could not initialize Firestore listeners:', e);
+      this.firestoreConnected = false;
+    }
+  }
+
+  private async seedToFirestore(list: ParticipantRecord[]) {
+    if (!db) return;
+    try {
+      const batch = writeBatch(db);
+      list.forEach((p) => {
+        const docId = safeDocId(p.registerNumber, p.id);
+        const clean = sanitizeForFirestore(p);
+        batch.set(doc(db, 'participants', docId), clean, { merge: true });
+      });
+      await batch.commit();
+      console.log(`Seeded ${list.length} participants to Cloud Firestore.`);
+    } catch (err) {
+      console.warn('Firestore seed notice:', err);
     }
   }
 
@@ -163,37 +203,34 @@ class ParticipantStore {
 
     this.isSyncing = true;
     try {
-      // 1. Sync via Firestore if available
-      if (this.firestoreAvailable && db) {
+      // 1. Direct Firestore Query Sync
+      if (db) {
         try {
           const colRef = collection(db, 'participants');
           const snap = await getDocs(colRef);
-          if (!snap.empty) {
-            const fsList: ParticipantRecord[] = [];
-            snap.forEach(d => {
-              const data = d.data() as ParticipantRecord;
-              if (data && data.registerNumber) fsList.push(data);
-            });
+          const fsList: ParticipantRecord[] = [];
+          snap.forEach((d) => {
+            const data = d.data() as ParticipantRecord;
+            if (data && data.registerNumber) fsList.push(data);
+          });
 
-            // Also upload any local participants not in Firestore
-            const local = this.getCachedParticipants();
-            const map = new Map<string, ParticipantRecord>();
-            local.forEach(p => map.set(p.registerNumber.toUpperCase(), p));
-            fsList.forEach(p => map.set(p.registerNumber.toUpperCase(), p));
-            const merged = Array.from(map.values());
+          const local = this.getCachedParticipants();
+          const map = new Map<string, ParticipantRecord>();
+          local.forEach((p) => map.set(p.registerNumber.toUpperCase(), p));
+          fsList.forEach((p) => map.set(p.registerNumber.toUpperCase(), p));
+          const merged = Array.from(map.values());
 
-            // Write back missing
+          if (fsList.length > 0 || local.length > 0) {
+            this.setLocalCache(merged);
+            // Write any local not yet on Firestore
             for (const p of local) {
               const docId = safeDocId(p.registerNumber, p.id);
-              setDoc(doc(db, 'participants', docId), p, { merge: true }).catch(() => {});
+              const clean = sanitizeForFirestore(p);
+              setDoc(doc(db, 'participants', docId), clean, { merge: true }).catch(() => {});
             }
-
-            this.setLocalCache(merged);
-            this.isSyncing = false;
-            return merged;
           }
         } catch (fsErr) {
-          console.warn('Firestore direct fetch fallback to server:', fsErr);
+          console.warn('Firestore fetch query notice:', fsErr);
         }
       }
 
@@ -216,14 +253,14 @@ class ParticipantStore {
         }
       }
     } catch (e) {
-      console.warn('Sync attempt completed with local cache:', e);
+      console.warn('Sync finished with local storage cache');
     } finally {
       this.isSyncing = false;
     }
     return this.getCachedParticipants();
   }
 
-  // Fetch all participants (invokes bidirectional sync)
+  // Fetch all participants
   async fetchAllParticipants(): Promise<ParticipantRecord[]> {
     return this.syncWithServer();
   }
@@ -259,7 +296,7 @@ class ParticipantStore {
     const cached = this.getCachedParticipants();
     const regNo = record.registerNumber.toUpperCase().trim();
     const existingIndex = cached.findIndex(
-      p => (p.registerNumber && p.registerNumber.toUpperCase() === regNo) || (record.id && p.id === record.id)
+      (p) => (p.registerNumber && p.registerNumber.toUpperCase() === regNo) || (record.id && p.id === record.id)
     );
 
     let updatedList: ParticipantRecord[];
@@ -301,11 +338,12 @@ class ParticipantStore {
 
     this.setLocalCache(updatedList);
 
-    // 2. Write directly to Firestore for instant multi-PC propagation
+    // 2. Write directly to Firestore with sanitized object (removes undefined fields)
     if (db) {
       const docId = safeDocId(targetRecord.registerNumber, targetRecord.id);
-      setDoc(doc(db, 'participants', docId), targetRecord, { merge: true }).catch(err => {
-        console.warn('Firestore participant write notice:', err);
+      const cleanData = sanitizeForFirestore(targetRecord);
+      setDoc(doc(db, 'participants', docId), cleanData, { merge: true }).catch((err) => {
+        console.warn('Firestore direct write notice:', err.message);
       });
     }
 
@@ -334,7 +372,7 @@ class ParticipantStore {
   async updateParticipant(regNo: string, updates: Partial<ParticipantRecord>): Promise<boolean> {
     const cached = this.getCachedParticipants();
     const upperReg = regNo.toUpperCase().trim();
-    const updated = cached.map(p =>
+    const updated = cached.map((p) =>
       p.registerNumber.toUpperCase() === upperReg ? { ...p, ...updates, registerNumber: upperReg } : p
     );
     this.setLocalCache(updated);
@@ -342,7 +380,8 @@ class ParticipantStore {
     // Firestore update
     if (db) {
       const docId = safeDocId(upperReg);
-      setDoc(doc(db, 'participants', docId), updates, { merge: true }).catch(() => {});
+      const cleanData = sanitizeForFirestore(updates);
+      setDoc(doc(db, 'participants', docId), cleanData, { merge: true }).catch(() => {});
     }
 
     try {
@@ -368,7 +407,7 @@ class ParticipantStore {
   async deleteParticipant(regNo: string): Promise<boolean> {
     const cached = this.getCachedParticipants();
     const upperReg = regNo.toUpperCase().trim();
-    const updated = cached.filter(p => p.registerNumber.toUpperCase() !== upperReg);
+    const updated = cached.filter((p) => p.registerNumber.toUpperCase() !== upperReg);
     this.setLocalCache(updated);
 
     // Firestore delete
@@ -402,9 +441,10 @@ class ParticipantStore {
     if (db) {
       try {
         const batch = writeBatch(db);
-        list.forEach(p => {
+        list.forEach((p) => {
           const docId = safeDocId(p.registerNumber, p.id);
-          batch.set(doc(db, 'participants', docId), p, { merge: true });
+          const clean = sanitizeForFirestore(p);
+          batch.set(doc(db, 'participants', docId), clean, { merge: true });
         });
         batch.commit().catch(() => {});
       } catch (e) {
@@ -435,8 +475,8 @@ class ParticipantStore {
   async importAndMergeParticipants(newRecords: ParticipantRecord[]): Promise<ParticipantRecord[]> {
     const existing = this.getCachedParticipants();
     const map = new Map<string, ParticipantRecord>();
-    existing.forEach(p => map.set(p.registerNumber.toUpperCase(), p));
-    newRecords.forEach(p => map.set(p.registerNumber.toUpperCase(), p));
+    existing.forEach((p) => map.set(p.registerNumber.toUpperCase(), p));
+    newRecords.forEach((p) => map.set(p.registerNumber.toUpperCase(), p));
     const merged = Array.from(map.values());
 
     this.setLocalCache(merged);
@@ -445,9 +485,10 @@ class ParticipantStore {
     if (db) {
       try {
         const batch = writeBatch(db);
-        merged.forEach(p => {
+        merged.forEach((p) => {
           const docId = safeDocId(p.registerNumber, p.id);
-          batch.set(doc(db, 'participants', docId), p, { merge: true });
+          const clean = sanitizeForFirestore(p);
+          batch.set(doc(db, 'participants', docId), clean, { merge: true });
         });
         batch.commit().catch(() => {});
       } catch (e) {}
@@ -475,15 +516,15 @@ class ParticipantStore {
   // Clear department participants
   async clearDepartment(department: Department): Promise<boolean> {
     const cached = this.getCachedParticipants();
-    const toDelete = cached.filter(p => p.department === department);
-    const updated = cached.filter(p => p.department !== department);
+    const toDelete = cached.filter((p) => p.department === department);
+    const updated = cached.filter((p) => p.department !== department);
     this.setLocalCache(updated);
 
     // Delete in Firestore
     if (db) {
       try {
         const batch = writeBatch(db);
-        toDelete.forEach(p => {
+        toDelete.forEach((p) => {
           const docId = safeDocId(p.registerNumber, p.id);
           batch.delete(doc(db, 'participants', docId));
         });
@@ -521,7 +562,8 @@ class ParticipantStore {
 
     // Firestore conclusions document
     if (db) {
-      setDoc(doc(db, 'system_state', 'conclusions'), updated, { merge: true }).catch(() => {});
+      const clean = sanitizeForFirestore(updated);
+      setDoc(doc(db, 'system_state', 'conclusions'), clean, { merge: true }).catch(() => {});
     }
 
     try {

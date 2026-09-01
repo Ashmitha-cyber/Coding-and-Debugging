@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Target, Code2, Users2, Trophy, Search, Settings, Skull, ArrowRight, FileText, User, Bug } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Target, Code2, Users2, Trophy, Search, Settings, Skull, ArrowRight, FileText, User, Bug, Wifi } from 'lucide-react';
 import { motion } from 'motion/react';
 import { TriquetraInsignia } from '../components/TriquetraInsignia';
 import { CyberBackground } from '../components/CyberBackground';
@@ -9,6 +9,7 @@ import { AboutModal } from '../components/AboutModal';
 import { AdminLoginModal } from '../components/AdminLoginModal';
 import { Department, ParticipantInfo } from '../types';
 import { soundManager } from '../utils/audio';
+import { participantStore } from '../utils/participantStore';
 
 interface LandingPageProps {
   onStartRegistration: (info: ParticipantInfo) => void;
@@ -24,6 +25,17 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [selectedDept, setSelectedDept] = useState<Department>('IT');
+  const [participantCount, setParticipantCount] = useState<number>(() => participantStore.getCachedParticipants().length);
+
+  useEffect(() => {
+    const handleUpdate = () => {
+      setParticipantCount(participantStore.getCachedParticipants().length);
+    };
+    window.addEventListener('triquetra_participants_updated', handleUpdate);
+    return () => {
+      window.removeEventListener('triquetra_participants_updated', handleUpdate);
+    };
+  }, []);
 
   const handleOpenRegister = (dept: Department = 'IT') => {
     setSelectedDept(dept);
@@ -102,8 +114,17 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </button>
         </nav>
 
-        {/* Right: Admin Login Button */}
-        <div>
+        {/* Right: Admin Login & Live Database Sync Status */}
+        <div className="flex items-center gap-2.5">
+          <button
+            onClick={handleOpenAdmin}
+            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-950/40 hover:bg-emerald-900/50 border border-emerald-500/30 text-emerald-400 font-mono text-[11px] transition-all cursor-pointer"
+            title="Live cloud database connected across all PCs"
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span>{participantCount} Active in Arena</span>
+          </button>
+
           <button
             onClick={handleOpenAdmin}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#09142e]/80 hover:bg-[#0e214d] border border-[#00f0ff]/40 hover:border-[#00f0ff] text-white font-mono text-xs tracking-wider uppercase transition-all shadow-[0_0_15px_rgba(0,240,255,0.15)] hover:shadow-[0_0_20px_rgba(0,240,255,0.35)] cursor-pointer active:scale-95"
