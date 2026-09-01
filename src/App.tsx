@@ -3,10 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { GamePhase, QuestionAnswerState, RoundResult, ParticipantInfo, Department, Question, ParticipantRecord } from './types';
 import { LEVEL_CONFIGS } from './data/questions';
 import { questionStore } from './utils/questionStore';
+import { shuffleArray } from './utils/shuffle';
 import { TopAppBar } from './components/TopAppBar';
 import { TabSwitchMonitor } from './components/TabSwitchMonitor';
 import { LandingPage } from './pages/LandingPage';
@@ -26,6 +27,7 @@ export default function App() {
   const [currentRound, setCurrentRound] = useState<1 | 2 | 3>(1);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [participant, setParticipant] = useState<ParticipantInfo | null>(null);
+  const [sessionSeed, setSessionSeed] = useState<string>(() => `SEED_${Date.now()}_${Math.random()}`);
 
   // Dynamic Live Questions State (backed by questionStore)
   const [allQuestions, setAllQuestions] = useState<Question[]>(() => questionStore.getAllQuestions());
@@ -58,8 +60,14 @@ export default function App() {
   const [tabSwitches, setTabSwitches] = useState(0);
   const [isTabWarningOpen, setIsTabWarningOpen] = useState(false);
 
-  // Filter questions for the active round
-  const roundQuestions = allQuestions.filter((q) => q.round === currentRound);
+  // Filter and shuffle questions for the active round uniquely for each participant
+  const roundQuestions = useMemo(() => {
+    const baseQuestions = allQuestions.filter((q) => q.round === currentRound);
+    const seed = participant?.registerNumber
+      ? `${participant.registerNumber}_ROUND_${currentRound}`
+      : `${sessionSeed}_ROUND_${currentRound}`;
+    return shuffleArray(baseQuestions, seed);
+  }, [allQuestions, currentRound, participant?.registerNumber, sessionSeed]);
 
   // Toggle Sound FX
   const handleToggleSound = () => {

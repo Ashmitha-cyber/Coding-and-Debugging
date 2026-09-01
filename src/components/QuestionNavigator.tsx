@@ -1,13 +1,14 @@
 import React from 'react';
 import { Check } from 'lucide-react';
-import { QuestionAnswerState } from '../types';
+import { QuestionAnswerState, Question } from '../types';
 import { soundManager } from '../utils/audio';
 
 interface QuestionNavigatorProps {
   totalQuestions: number;
   currentIndex: number;
   answers: Record<number, QuestionAnswerState>;
-  questionIdOffset: number;
+  questions?: Question[];
+  questionIdOffset?: number;
   onSelectQuestion: (index: number) => void;
 }
 
@@ -15,7 +16,8 @@ export const QuestionNavigator: React.FC<QuestionNavigatorProps> = ({
   totalQuestions,
   currentIndex,
   answers,
-  questionIdOffset,
+  questions = [],
+  questionIdOffset = 1,
   onSelectQuestion
 }) => {
   return (
@@ -47,10 +49,10 @@ export const QuestionNavigator: React.FC<QuestionNavigatorProps> = ({
         </div>
       </div>
 
-      {/* Grid of 15 Questions */}
+      {/* Grid of Questions */}
       <div className="grid grid-cols-5 sm:grid-cols-15 gap-1.5 sm:gap-2">
         {Array.from({ length: totalQuestions }).map((_, index) => {
-          const qId = questionIdOffset + index;
+          const qId = questions[index]?.id ?? (questionIdOffset + index);
           const answerState = answers[qId];
           const isAnswered = answerState?.isAnswered;
           const isCurrent = currentIndex === index;

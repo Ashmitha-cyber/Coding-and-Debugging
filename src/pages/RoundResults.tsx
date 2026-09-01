@@ -518,7 +518,7 @@ export const RoundResults: React.FC<RoundResultsProps> = ({
 
                     {/* Question List */}
                     <div className="space-y-3">
-                      {filteredQuestions.map((q) => {
+                      {filteredQuestions.map((q, idx) => {
                         const state = answers[q.id];
                         const isCorrect = state?.isCorrect ?? false;
                         const userCode = state?.code || q.brokenCode;
@@ -551,7 +551,7 @@ export const RoundResults: React.FC<RoundResultsProps> = ({
                                 <div>
                                   <div className="flex items-center gap-2">
                                     <span className="font-mono text-xs font-bold text-gray-400">
-                                      Q{q.questionNumber || q.id}
+                                      Q{(idx + 1).toString().padStart(2, '0')}
                                     </span>
                                     <h4 className="font-mono text-xs font-bold text-white">
                                       {q.title}
@@ -703,7 +703,7 @@ export const RoundResults: React.FC<RoundResultsProps> = ({
                 </div>
 
                 <div className="space-y-3">
-                  {questions.map((q) => {
+                  {questions.map((q, idx) => {
                     const state = answers[q.id];
                     const isCorrect = state?.isCorrect ?? false;
                     const userCode = state?.code || q.brokenCode;
@@ -735,7 +735,7 @@ export const RoundResults: React.FC<RoundResultsProps> = ({
                             <div>
                               <div className="flex items-center gap-2">
                                 <span className="font-mono text-xs font-bold text-gray-400">
-                                  Q{q.questionNumber || q.id}
+                                  Q{(idx + 1).toString().padStart(2, '0')}
                                 </span>
                                 <h4 className="font-mono text-xs font-bold text-white">
                                   {q.title}

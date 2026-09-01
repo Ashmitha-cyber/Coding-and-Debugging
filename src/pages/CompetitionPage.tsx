@@ -95,6 +95,7 @@ export const CompetitionPage: React.FC<CompetitionPageProps> = ({
         totalQuestions={questions.length}
         currentIndex={currentQuestionIndex}
         answers={answers}
+        questions={questions}
         questionIdOffset={questionIdOffset}
         onSelectQuestion={onSelectQuestion}
       />
@@ -125,7 +126,7 @@ export const CompetitionPage: React.FC<CompetitionPageProps> = ({
             {/* Question Title */}
             <div>
               <h2 className="text-xl md:text-2xl font-bold text-white tracking-wide">
-                {currentQuestion.questionNumber.toString().padStart(2, '0')}. {currentQuestion.title}
+                {(currentQuestionIndex + 1).toString().padStart(2, '0')}. {currentQuestion.title}
               </h2>
             </div>
 
