@@ -21,11 +21,36 @@ export const questionStore = {
     return DEFAULT_QUESTIONS;
   },
 
+  // Fetch questions from central server
+  async fetchServerQuestions(): Promise<Question[]> {
+    try {
+      const res = await fetch('/api/questions');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.questions) && data.questions.length > 0) {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(data.questions));
+          window.dispatchEvent(new CustomEvent(QUESTIONS_UPDATED_EVENT, { detail: data.questions }));
+          return data.questions;
+        }
+      }
+    } catch (e) {
+      // Ignore network errors and use local cache
+    }
+    return this.getAllQuestions();
+  },
+
   // Save full questions array
   saveQuestions(questions: Question[]): void {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(questions));
       window.dispatchEvent(new CustomEvent(QUESTIONS_UPDATED_EVENT, { detail: questions }));
+
+      // Sync with server in background
+      fetch('/api/questions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ questions })
+      }).catch(err => console.warn('Failed to sync questions to server', err));
     } catch (e) {
       console.error('Failed to save questions to storage', e);
     }
@@ -77,6 +102,11 @@ export const questionStore = {
     try {
       localStorage.removeItem(STORAGE_KEY);
       window.dispatchEvent(new CustomEvent(QUESTIONS_UPDATED_EVENT, { detail: DEFAULT_QUESTIONS }));
+      fetch('/api/questions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ questions: [] })
+      }).catch(() => {});
     } catch (e) {
       console.error('Failed to reset questions', e);
     }

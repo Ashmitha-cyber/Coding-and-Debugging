@@ -37,6 +37,7 @@ import {
 import { soundManager } from '../utils/audio';
 import { Department, YearOfStudy, Question, ParticipantRecord } from '../types';
 import { questionStore } from '../utils/questionStore';
+import { participantStore } from '../utils/participantStore';
 import { AdminQuestionEditorModal } from './AdminQuestionEditorModal';
 import { AdminParticipantEditorModal } from './AdminParticipantEditorModal';
 
@@ -125,47 +126,67 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
   const [isParticipantEditorOpen, setIsParticipantEditorOpen] = useState(false);
   const [participantToEdit, setParticipantToEdit] = useState<ParticipantRecord | null>(null);
   const [editorDefaultDept, setEditorDefaultDept] = useState<Department>('IT');
+  const [isSyncing, setIsSyncing] = useState(false);
 
-  // Load data unconditionally on mount / state change
+  // Load data unconditionally on mount / state change + periodic multi-PC sync
   useEffect(() => {
     if (isOpen && isAuthenticated) {
       loadParticipants();
       loadQuestions();
       loadAllConclusions();
+
+      // Poll every 2 seconds while admin modal is open to pick up participants registering on other PCs
+      const interval = setInterval(() => {
+        loadParticipants();
+        loadAllConclusions();
+      }, 2000);
+
+      const handleUpdate = () => {
+        loadParticipants();
+        loadAllConclusions();
+      };
+      window.addEventListener('triquetra_participants_updated', handleUpdate);
+      window.addEventListener('triquetra_round1_concluded_event', handleUpdate);
+
+      return () => {
+        clearInterval(interval);
+        window.removeEventListener('triquetra_participants_updated', handleUpdate);
+        window.removeEventListener('triquetra_round1_concluded_event', handleUpdate);
+      };
     }
   }, [isOpen, isAuthenticated]);
 
-  const loadAllConclusions = () => {
+  const loadAllConclusions = async () => {
     try {
-      const itConcluded = localStorage.getItem('triquetra_round1_concluded_IT') === 'true';
-      const aidsConcluded = localStorage.getItem('triquetra_round1_concluded_AIDS') === 'true';
-      const csbsConcluded = localStorage.getItem('triquetra_round1_concluded_CSBS') === 'true';
-      const globalConcluded = localStorage.getItem('triquetra_round1_concluded') === 'true';
-
+      const state = await participantStore.fetchConclusions();
       setDeptConclusion({
-        IT: itConcluded || globalConcluded,
-        AIDS: aidsConcluded || globalConcluded,
-        CSBS: csbsConcluded || globalConcluded
+        IT: state.IT,
+        AIDS: state.AIDS,
+        CSBS: state.CSBS
       });
-      setIsGlobalConcluded(globalConcluded);
+      setIsGlobalConcluded(state.global);
     } catch (e) {
       console.error('Failed to load conclusions', e);
     }
   };
 
-  const loadParticipants = () => {
+  const loadParticipants = async () => {
     try {
-      const stored = localStorage.getItem('triquetra_participants');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        setParticipants(Array.isArray(parsed) ? parsed : []);
-      } else {
-        setParticipants([]);
-      }
+      const list = await participantStore.fetchAllParticipants();
+      setParticipants(list);
     } catch (e) {
       console.error('Failed to load participants', e);
-      setParticipants([]);
     }
+  };
+
+  const handleManualSync = async () => {
+    setIsSyncing(true);
+    soundManager.playBeep(520, 'sine', 0.04);
+    await Promise.all([loadParticipants(), loadAllConclusions(), questionStore.fetchServerQuestions()]);
+    setTimeout(() => {
+      setIsSyncing(false);
+      showNotice('⚡ Synced real-time data from all connected arena PCs!');
+    }, 400);
   };
 
   const loadQuestions = () => {
@@ -210,48 +231,29 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
   };
 
   // Save Participant Record (create or update)
-  const handleSaveParticipantRecord = (record: ParticipantRecord) => {
-    let updated: ParticipantRecord[];
-    const exists = participants.some((p) => p.registerNumber === record.registerNumber || (record.id && p.id === record.id));
-    
-    if (exists) {
-      updated = participants.map((p) =>
-        (p.registerNumber === record.registerNumber || (record.id && p.id === record.id)) ? record : p
-      );
-      showNotice(`Updated details for ${record.name} (${record.registerNumber})`);
-    } else {
-      updated = [record, ...participants];
-      showNotice(`Registered new team: ${record.teamName || record.name} in ${record.department}`);
-    }
-
-    setParticipants(updated);
-    localStorage.setItem('triquetra_participants', JSON.stringify(updated));
-    window.dispatchEvent(new CustomEvent('triquetra_participants_updated', { detail: updated }));
+  const handleSaveParticipantRecord = async (record: ParticipantRecord) => {
+    await participantStore.registerOrUpdate(record);
+    await loadParticipants();
+    showNotice(`Saved details for ${record.name} (${record.registerNumber})`);
     setIsParticipantEditorOpen(false);
   };
 
   // Toggle Round 2 qualification for an individual candidate
-  const handleToggleQualification = (regNo: string) => {
-    const updated = participants.map((p) => {
-      if (p.registerNumber === regNo) {
-        const nextQualified = !p.qualifiedForRound2;
-        return {
-          ...p,
-          qualifiedForRound2: nextQualified,
-          resultStatus: nextQualified ? ('Qualified' as const) : ('Not Qualified' as const)
-        };
-      }
-      return p;
-    });
-
-    setParticipants(updated);
-    localStorage.setItem('triquetra_participants', JSON.stringify(updated));
-    window.dispatchEvent(new CustomEvent('triquetra_participants_updated', { detail: updated }));
-    soundManager.playBeep(480, 'sine', 0.03);
+  const handleToggleQualification = async (regNo: string) => {
+    const current = participants.find((p) => p.registerNumber.toUpperCase() === regNo.toUpperCase());
+    if (current) {
+      const nextQualified = !current.qualifiedForRound2;
+      await participantStore.updateParticipant(regNo, {
+        qualifiedForRound2: nextQualified,
+        resultStatus: nextQualified ? ('Qualified' as const) : ('Not Qualified' as const)
+      });
+      await loadParticipants();
+      soundManager.playBeep(480, 'sine', 0.03);
+    }
   };
 
   // Conclude Round 1 for a specific department
-  const handleConcludeDepartment = (dept: Department) => {
+  const handleConcludeDepartment = async (dept: Department) => {
     const deptParticipants = participants.filter((p) => p.department === dept);
     const qualifiedCount = deptParticipants.filter((p) => p.qualifiedForRound2).length;
 
@@ -266,55 +268,34 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
       return p;
     });
 
-    setParticipants(updated);
-    localStorage.setItem('triquetra_participants', JSON.stringify(updated));
-    localStorage.setItem(`triquetra_round1_concluded_${dept}`, 'true');
-
-    setDeptConclusion((prev) => ({ ...prev, [dept]: true }));
-
-    // Global event notification
-    window.dispatchEvent(new CustomEvent('triquetra_round1_concluded_event', {
-      detail: { department: dept, concluded: true, participants: updated }
-    }));
-    window.dispatchEvent(new CustomEvent('triquetra_participants_updated', { detail: updated }));
+    await participantStore.saveBulkParticipants(updated);
+    await participantStore.saveConclusions({ [dept]: true });
+    await loadParticipants();
+    await loadAllConclusions();
 
     soundManager.playSuccess();
     showNotice(`🎉 Concluded Round 1 for ${DEPARTMENTS[dept].name}! (${qualifiedCount} Teams Qualified)`);
   };
 
   // Reopen Round 1 for a specific department
-  const handleReopenDepartment = (dept: Department) => {
-    localStorage.removeItem(`triquetra_round1_concluded_${dept}`);
-    setDeptConclusion((prev) => ({ ...prev, [dept]: false }));
-
-    window.dispatchEvent(new CustomEvent('triquetra_round1_concluded_event', {
-      detail: { department: dept, concluded: false }
-    }));
+  const handleReopenDepartment = async (dept: Department) => {
+    await participantStore.saveConclusions({ [dept]: false });
+    await loadAllConclusions();
     soundManager.playWarning();
     showNotice(`Round 1 evaluation for ${DEPARTMENTS[dept].shortName} re-opened as DRAFT.`);
   };
 
   // Conclude all departments simultaneously
-  const handleConcludeAll = () => {
+  const handleConcludeAll = async () => {
     const updated = participants.map((p) => ({
       ...p,
       resultStatus: p.qualifiedForRound2 ? ('Qualified' as const) : ('Not Qualified' as const)
     }));
 
-    setParticipants(updated);
-    localStorage.setItem('triquetra_participants', JSON.stringify(updated));
-    localStorage.setItem('triquetra_round1_concluded', 'true');
-    localStorage.setItem('triquetra_round1_concluded_IT', 'true');
-    localStorage.setItem('triquetra_round1_concluded_AIDS', 'true');
-    localStorage.setItem('triquetra_round1_concluded_CSBS', 'true');
-
-    setDeptConclusion({ IT: true, AIDS: true, CSBS: true });
-    setIsGlobalConcluded(true);
-
-    window.dispatchEvent(new CustomEvent('triquetra_round1_concluded_event', {
-      detail: { concluded: true, participants: updated }
-    }));
-    window.dispatchEvent(new CustomEvent('triquetra_participants_updated', { detail: updated }));
+    await participantStore.saveBulkParticipants(updated);
+    await participantStore.saveConclusions({ IT: true, AIDS: true, CSBS: true, global: true });
+    await loadParticipants();
+    await loadAllConclusions();
 
     soundManager.playSuccess();
     const totalQual = updated.filter((p) => p.qualifiedForRound2).length;
@@ -322,7 +303,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
   };
 
   // Select Top N in a given department
-  const handleSelectTopNDept = (dept: Department, n: number) => {
+  const handleSelectTopNDept = async (dept: Department, n: number) => {
     const deptList = participants.filter((p) => p.department === dept);
     const sorted = [...deptList].sort((a, b) => (b.totalScore || 0) - (a.totalScore || 0));
     const topRegs = new Set(sorted.slice(0, n).map((p) => p.registerNumber));
@@ -339,15 +320,14 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
       return p;
     });
 
-    setParticipants(updated);
-    localStorage.setItem('triquetra_participants', JSON.stringify(updated));
-    window.dispatchEvent(new CustomEvent('triquetra_participants_updated', { detail: updated }));
+    await participantStore.saveBulkParticipants(updated);
+    await loadParticipants();
     soundManager.playBeep(650, 'sine', 0.05);
     showNotice(`Selected top ${n} ranked team(s) in ${DEPARTMENTS[dept].shortName}.`);
   };
 
   // Select/Deselect All in a department
-  const handleToggleSelectAllDept = (dept: Department, select: boolean) => {
+  const handleToggleSelectAllDept = async (dept: Department, select: boolean) => {
     const updated = participants.map((p) => {
       if (p.department === dept) {
         return {
@@ -359,38 +339,33 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
       return p;
     });
 
-    setParticipants(updated);
-    localStorage.setItem('triquetra_participants', JSON.stringify(updated));
-    window.dispatchEvent(new CustomEvent('triquetra_participants_updated', { detail: updated }));
+    await participantStore.saveBulkParticipants(updated);
+    await loadParticipants();
     soundManager.playBeep(520, 'sine', 0.03);
     showNotice(select ? `Selected all teams in ${DEPARTMENTS[dept].shortName}.` : `Deselected all in ${DEPARTMENTS[dept].shortName}.`);
   };
 
   // Delete participant
-  const handleDeleteParticipant = (regNo: string) => {
-    const updated = participants.filter((p) => p.registerNumber !== regNo);
-    setParticipants(updated);
-    localStorage.setItem('triquetra_participants', JSON.stringify(updated));
-    window.dispatchEvent(new CustomEvent('triquetra_participants_updated', { detail: updated }));
+  const handleDeleteParticipant = async (regNo: string) => {
+    await participantStore.deleteParticipant(regNo);
+    await loadParticipants();
     soundManager.playBeep(350, 'square', 0.05);
     setDeleteConfirmId(null);
     showNotice(`Removed participant (${regNo})`);
   };
 
   // Clear department database
-  const handleClearDepartment = (dept: Department) => {
+  const handleClearDepartment = async (dept: Department) => {
     if (window.confirm(`Are you sure you want to clear all participant records in ${DEPARTMENTS[dept].name}?`)) {
-      const updated = participants.filter((p) => p.department !== dept);
-      setParticipants(updated);
-      localStorage.setItem('triquetra_participants', JSON.stringify(updated));
-      window.dispatchEvent(new CustomEvent('triquetra_participants_updated', { detail: updated }));
+      await participantStore.clearDepartment(dept);
+      await loadParticipants();
       soundManager.playWarning();
       showNotice(`Cleared ${DEPARTMENTS[dept].shortName} database.`);
     }
   };
 
   // Add sample team in department
-  const handleAddSampleInDept = (dept: Department) => {
+  const handleAddSampleInDept = async (dept: Department) => {
     const r1 = Math.floor(11 + Math.random() * 5); // 11-15
     const r2 = Math.floor(9 + Math.random() * 6);  // 9-15
     const r3 = Math.floor(8 + Math.random() * 7);  // 8-15
@@ -437,10 +412,8 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
       registeredAt: new Date().toISOString()
     };
 
-    const updated = [newRecord, ...participants];
-    setParticipants(updated);
-    localStorage.setItem('triquetra_participants', JSON.stringify(updated));
-    window.dispatchEvent(new CustomEvent('triquetra_participants_updated', { detail: updated }));
+    await participantStore.registerOrUpdate(newRecord);
+    await loadParticipants();
     soundManager.playBeep(600, 'sine', 0.04);
     showNotice(`Added sample team to ${DEPARTMENTS[dept].shortName}: ${newRecord.teamName}`);
   };
@@ -800,10 +773,22 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
                 </button>
               </div>
 
-              {/* Master Authentication Indicator */}
-              <div className="flex items-center gap-2 pb-2 text-[11px] font-mono text-gray-400">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span>Admin Authenticated</span>
+              {/* Master Authentication & Multi-PC Live Sync Indicator */}
+              <div className="flex items-center gap-2 pb-2 text-[11px] font-mono">
+                <button
+                  type="button"
+                  onClick={handleManualSync}
+                  disabled={isSyncing}
+                  className="px-2.5 py-1 rounded bg-[#00f0ff]/10 hover:bg-[#00f0ff]/25 border border-[#00f0ff]/30 text-[#00f0ff] flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                  title="Force re-sync with central database across all arena PCs"
+                >
+                  <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
+                  <span className="hidden sm:inline">Sync All PCs</span>
+                </button>
+                <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-emerald-950/40 border border-emerald-500/30 text-emerald-400">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="hidden sm:inline">Multi-PC Live Sync</span>
+                </div>
               </div>
             </div>
 

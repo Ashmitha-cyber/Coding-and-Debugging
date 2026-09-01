@@ -7,6 +7,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { GamePhase, QuestionAnswerState, RoundResult, ParticipantInfo, Department, Question, ParticipantRecord } from './types';
 import { LEVEL_CONFIGS } from './data/questions';
 import { questionStore } from './utils/questionStore';
+import { participantStore } from './utils/participantStore';
 import { shuffleArray } from './utils/shuffle';
 import { TopAppBar } from './components/TopAppBar';
 import { TabSwitchMonitor } from './components/TabSwitchMonitor';
@@ -32,13 +33,18 @@ export default function App() {
   // Dynamic Live Questions State (backed by questionStore)
   const [allQuestions, setAllQuestions] = useState<Question[]>(() => questionStore.getAllQuestions());
 
-  // Listen for admin question updates
+  // Listen for admin question updates & initialize multi-PC polling
   useEffect(() => {
+    questionStore.fetchServerQuestions();
+    const stopPolling = participantStore.startPolling(2500);
+
     const handleQuestionsUpdate = () => {
       setAllQuestions(questionStore.getAllQuestions());
     };
     window.addEventListener('triquetra_questions_updated', handleQuestionsUpdate);
+
     return () => {
+      stopPolling();
       window.removeEventListener('triquetra_questions_updated', handleQuestionsUpdate);
     };
   }, []);
@@ -79,7 +85,7 @@ export default function App() {
     }
   };
 
-  // Synchronize participant record into localStorage leaderboard
+  // Synchronize participant record into centralized leaderboard
   const syncParticipantRecord = useCallback((
     roundNumber: 1 | 2 | 3,
     scoreThisRound: number,
@@ -89,34 +95,20 @@ export default function App() {
     if (!participant) return;
 
     try {
-      const stored = localStorage.getItem('triquetra_participants');
-      let list: ParticipantRecord[] = stored ? JSON.parse(stored) : [];
+      const list = participantStore.getCachedParticipants();
+      let existing = list.find((p) => p.registerNumber.toUpperCase() === participant.registerNumber.toUpperCase());
 
-      let existingIndex = list.findIndex((p) => p.registerNumber === participant.registerNumber);
-      let record: ParticipantRecord;
+      const record: Partial<ParticipantRecord> & { registerNumber: string } = {
+        name: participant.name,
+        registerNumber: participant.registerNumber.toUpperCase(),
+        year: participant.year,
+        department: participant.department,
+        teamName: participant.teamName || (participant.partnerName ? `TEAM_${participant.department}` : undefined),
+        partnerName: participant.partnerName,
+        partnerRegisterNumber: participant.partnerRegisterNumber,
+        tabViolations: (existing?.tabViolations || 0) + violations
+      };
 
-      if (existingIndex >= 0) {
-        record = { ...list[existingIndex] };
-      } else {
-        record = {
-          id: `P-${Date.now()}`,
-          name: participant.name,
-          registerNumber: participant.registerNumber,
-          year: participant.year,
-          department: participant.department,
-          teamName: participant.teamName || (participant.partnerName ? `TEAM_${participant.department}` : undefined),
-          partnerName: participant.partnerName,
-          partnerRegisterNumber: participant.partnerRegisterNumber,
-          round1Score: 0,
-          round2Score: 0,
-          round3Score: 0,
-          totalScore: 0,
-          status: 'In Progress',
-          registeredAt: new Date().toISOString()
-        };
-      }
-
-      // Update round specific marks
       if (roundNumber === 1) {
         record.round1Score = scoreThisRound;
         record.totalScore = scoreThisRound;
@@ -125,32 +117,24 @@ export default function App() {
         record.status = 'In Progress';
       } else if (roundNumber === 2) {
         record.round2Score = scoreThisRound;
-        record.totalScore = (record.round1Score || 0) + scoreThisRound;
-        record.timeUsedSeconds = (record.timeUsedSeconds || 0) + timeUsedSec;
+        record.totalScore = (existing?.round1Score || 0) + scoreThisRound;
+        record.timeUsedSeconds = (existing?.timeUsedSeconds || 0) + timeUsedSec;
         record.finishingStatus = `Finished Round 2 (${Math.floor(timeUsedSec / 60)}m ${timeUsedSec % 60}s)`;
         record.status = 'In Progress';
       } else if (roundNumber === 3) {
         record.round3Score = scoreThisRound;
-        record.totalScore = (record.round1Score || 0) + (record.round2Score || 0) + scoreThisRound;
-        const totalSec = (record.timeUsedSeconds || 0) + timeUsedSec;
+        record.totalScore = (existing?.round1Score || 0) + (existing?.round2Score || 0) + scoreThisRound;
+        const totalSec = (existing?.timeUsedSeconds || 0) + timeUsedSec;
         record.timeUsedSeconds = totalSec;
         record.finishingStatus = `Finished (${Math.floor(totalSec / 60)}m ${totalSec % 60}s)`;
         record.status = 'Completed';
       }
 
-      record.tabViolations = (record.tabViolations || 0) + violations;
       const totalPossible = roundNumber * 15;
       record.accuracy = `${Math.round(((record.totalScore || 0) / totalPossible) * 100)}%`;
       record.timeUsed = `${Math.floor((record.timeUsedSeconds || 0) / 60)}m ${(record.timeUsedSeconds || 0) % 60}s`;
 
-      if (existingIndex >= 0) {
-        list[existingIndex] = record;
-      } else {
-        list.unshift(record);
-      }
-
-      localStorage.setItem('triquetra_participants', JSON.stringify(list));
-      window.dispatchEvent(new CustomEvent('triquetra_participants_updated', { detail: list }));
+      participantStore.registerOrUpdate(record);
     } catch (e) {
       console.error('Failed to sync participant record', e);
     }
@@ -311,32 +295,25 @@ export default function App() {
     setTabSwitches(0);
     setPhase('BRIEFING');
 
-    // Register into storage immediately
+    // Register into centralized storage immediately
     try {
-      const stored = localStorage.getItem('triquetra_participants');
-      let list: ParticipantRecord[] = stored ? JSON.parse(stored) : [];
-      if (!list.some((p) => p.registerNumber === info.registerNumber)) {
-        const record: ParticipantRecord = {
-          id: `P-${Date.now()}`,
-          name: info.name,
-          registerNumber: info.registerNumber,
-          year: info.year,
-          department: info.department,
-          teamName: info.teamName || (info.partnerName ? `TEAM_${info.department}` : undefined),
-          partnerName: info.partnerName,
-          partnerRegisterNumber: info.partnerRegisterNumber,
-          round1Score: 0,
-          round2Score: 0,
-          round3Score: 0,
-          totalScore: 0,
-          status: 'Active',
-          finishingStatus: 'In Progress',
-          registeredAt: new Date().toISOString()
-        };
-        list.unshift(record);
-        localStorage.setItem('triquetra_participants', JSON.stringify(list));
-        window.dispatchEvent(new CustomEvent('triquetra_participants_updated', { detail: list }));
-      }
+      participantStore.registerOrUpdate({
+        id: `P-${Date.now()}`,
+        name: info.name,
+        registerNumber: info.registerNumber.toUpperCase(),
+        year: info.year,
+        department: info.department,
+        teamName: info.teamName || (info.partnerName ? `TEAM_${info.department}` : undefined),
+        partnerName: info.partnerName,
+        partnerRegisterNumber: info.partnerRegisterNumber,
+        round1Score: 0,
+        round2Score: 0,
+        round3Score: 0,
+        totalScore: 0,
+        status: 'Active',
+        finishingStatus: 'In Progress',
+        registeredAt: new Date().toISOString()
+      });
     } catch (e) {}
   };
 

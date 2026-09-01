@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { X, User, GraduationCap, Hash, ArrowRight, Shield, Cpu, Users } from 'lucide-react';
+import { X, User, GraduationCap, Hash, ArrowRight, Shield, Cpu, Users, Loader2 } from 'lucide-react';
 import { Department, ParticipantInfo, YearOfStudy } from '../types';
 import { soundManager } from '../utils/audio';
+import { participantStore } from '../utils/participantStore';
 
 interface RegistrationModalProps {
   isOpen: boolean;
@@ -59,27 +60,24 @@ export const RegistrationModal: React.FC<RegistrationModalProps> = ({
       partnerRegisterNumber: isDuo && partnerRegisterNumber.trim() ? partnerRegisterNumber.trim().toUpperCase() : undefined
     };
 
-    // Store participant in localStorage list for admin panel
+    // Store participant in participantStore (updates local cache + syncs to central server)
     try {
-      const existing = JSON.parse(localStorage.getItem('triquetra_participants') || '[]');
-      const updated = [
-        ...existing.filter((p: any) => p.registerNumber !== participantData.registerNumber),
-        {
-          ...participantData,
-          id: `P-${Date.now()}`,
-          registeredAt: new Date().toISOString(),
-          score: 0,
-          totalQuestions: 45,
-          accuracy: '0%',
-          timeUsed: '0m 00s',
-          tabViolations: 0,
-          status: 'Active'
-        }
-      ];
-      localStorage.setItem('triquetra_participants', JSON.stringify(updated));
       localStorage.setItem('triquetra_current_participant', JSON.stringify(participantData));
+      participantStore.registerOrUpdate({
+        ...participantData,
+        id: `P-${Date.now()}`,
+        registeredAt: new Date().toISOString(),
+        round1Score: 0,
+        round2Score: 0,
+        round3Score: 0,
+        totalScore: 0,
+        accuracy: '0%',
+        timeUsed: '0m 00s',
+        tabViolations: 0,
+        status: 'Active'
+      });
     } catch (e) {
-      console.error('Failed to update participants storage', e);
+      console.error('Failed to sync participant registration', e);
     }
 
     onRegister(participantData);
