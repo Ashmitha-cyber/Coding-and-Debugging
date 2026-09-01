@@ -21,7 +21,7 @@ import {
   Code2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { RoundResult, ParticipantInfo, ParticipantRecord, Question, QuestionAnswerState } from '../types';
+import { RoundResult, ParticipantInfo, ParticipantRecord, Question, QuestionAnswerState, Department } from '../types';
 import { LEVEL_CONFIGS } from '../data/questions';
 import { soundManager } from '../utils/audio';
 import { participantStore } from '../utils/participantStore';
@@ -57,13 +57,20 @@ export const RoundResults: React.FC<RoundResultsProps> = ({
   const [questionFilter, setQuestionFilter] = useState<'ALL' | 'CORRECT' | 'INCORRECT'>('ALL');
   const [expandedQuestionIds, setExpandedQuestionIds] = useState<Record<number, boolean>>({});
 
-  const checkQualification = () => {
+  const checkQualification = async () => {
     try {
+      // Trigger background sync to ensure latest conclusions and participants
+      if (round === 1) {
+        participantStore.fetchConclusions().catch(() => {});
+        participantStore.fetchAllParticipants().catch(() => {});
+      }
+
       // Check conclusion status for Round 1
       if (round === 1) {
         const conclusions = participantStore.getCachedConclusions();
-        const isDeptConcluded = participant?.department ? conclusions[participant.department] : false;
-        const concluded = isDeptConcluded || conclusions.global;
+        const deptKey = (participant?.department || '').trim().toUpperCase() as Department;
+        const isDeptConcluded = deptKey && conclusions[deptKey] !== undefined ? conclusions[deptKey] : false;
+        const concluded = !!(isDeptConcluded || conclusions.global);
         setIsRoundConcluded(concluded);
       } else {
         // Round 2 and Round 3 are automatically ready for detailed review once submitted
@@ -72,15 +79,32 @@ export const RoundResults: React.FC<RoundResultsProps> = ({
 
       const list = participantStore.getCachedParticipants();
       if (list && list.length > 0) {
-        // Find current participant record
-        if (participant?.registerNumber) {
-          const current = list.find((p) => p.registerNumber.toUpperCase() === participant.registerNumber.toUpperCase());
-          if (current) {
-            setParticipantRecord(current);
-            setIsQualified(!!current.qualifiedForRound2);
-          } else {
-            setIsQualified(false);
-          }
+        // Robust match for current participant
+        const userReg = (participant?.registerNumber || '').toUpperCase().trim();
+        const userPartnerReg = (participant?.partnerRegisterNumber || '').toUpperCase().trim();
+        const userName = (participant?.name || '').toLowerCase().trim();
+        const userTeam = (participant?.teamName || '').toLowerCase().trim();
+
+        const current = list.find((p) => {
+          const pReg = (p.registerNumber || '').toUpperCase().trim();
+          const pPartnerReg = (p.partnerRegisterNumber || '').toUpperCase().trim();
+          const pName = (p.name || '').toLowerCase().trim();
+          const pTeam = (p.teamName || '').toLowerCase().trim();
+
+          if (userReg && pReg && pReg === userReg) return true;
+          if (userPartnerReg && pPartnerReg && pPartnerReg === userPartnerReg) return true;
+          if (userReg && pPartnerReg && pPartnerReg === userReg) return true;
+          if (userPartnerReg && pReg && pReg === userPartnerReg) return true;
+          if (userTeam && pTeam && pTeam === userTeam) return true;
+          if (userName && pName && pName === userName) return true;
+          return false;
+        });
+
+        if (current) {
+          setParticipantRecord(current);
+          setIsQualified(!!current.qualifiedForRound2);
+        } else {
+          setIsQualified(false);
         }
 
         // Get qualified list for the department (or overall)

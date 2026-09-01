@@ -16,14 +16,55 @@ const STORAGE_KEY = 'triquetra_participants';
 const CONCLUSIONS_KEY_PREFIX = 'triquetra_round1_concluded';
 const PARTICIPANTS_UPDATED_EVENT = 'triquetra_participants_updated';
 const CONCLUSIONS_UPDATED_EVENT = 'triquetra_round1_concluded_event';
-const FIRESTORE_EXHAUSTED_KEY = 'triquetra_firestore_exhausted';
+const FIRESTORE_EXHAUSTED_KEY = 'triquetra_firestore_exhausted_timestamp';
 const DELETED_IDS_KEY = 'triquetra_deleted_ids';
+const EXHAUSTION_CACHE_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 export interface ConclusionsState {
   IT: boolean;
   AIDS: boolean;
   CSBS: boolean;
   global: boolean;
+}
+
+function isFirestoreQuotaExhausted(): boolean {
+  try {
+    if (typeof window === 'undefined') return false;
+    const stored = localStorage.getItem(FIRESTORE_EXHAUSTED_KEY);
+    if (!stored) return false;
+    const ts = parseInt(stored, 10);
+    if (isNaN(ts)) return stored === 'true';
+    if (Date.now() - ts < EXHAUSTION_CACHE_MS) {
+      return true;
+    }
+    localStorage.removeItem(FIRESTORE_EXHAUSTED_KEY);
+    return false;
+  } catch (_) {
+    return false;
+  }
+}
+
+function markFirestoreExhausted() {
+  try {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(FIRESTORE_EXHAUSTED_KEY, Date.now().toString());
+    }
+  } catch (_) {}
+}
+
+function isQuotaError(err: any): boolean {
+  if (!err) return false;
+  const code = (err.code || '').toLowerCase();
+  const msg = (err.message || '').toLowerCase();
+  return (
+    code === 'resource-exhausted' ||
+    code === 'permission-denied' ||
+    code === 'unavailable' ||
+    msg.includes('quota') ||
+    msg.includes('resource-exhausted') ||
+    msg.includes('exceeded') ||
+    msg.includes('maximum backoff')
+  );
 }
 
 function getDeletedTombstones(): Set<string> {
@@ -87,13 +128,9 @@ class ParticipantStore {
   public firestoreDisabled = false;
 
   constructor() {
-    try {
-      if (typeof window !== 'undefined' && sessionStorage.getItem(FIRESTORE_EXHAUSTED_KEY) === 'true') {
-        this.firestoreDisabled = true;
-      }
-    } catch (_) {}
-
-    if (!this.firestoreDisabled) {
+    if (isFirestoreQuotaExhausted()) {
+      this.firestoreDisabled = true;
+    } else {
       this.initFirestoreListeners();
     }
   }
@@ -103,15 +140,7 @@ class ParticipantStore {
     if (this.firestoreDisabled) return;
     this.firestoreDisabled = true;
     this.firestoreConnected = false;
-    try {
-      if (typeof window !== 'undefined') {
-        sessionStorage.setItem(FIRESTORE_EXHAUSTED_KEY, 'true');
-      }
-    } catch (_) {}
-
-    if (reason) {
-      console.warn(`[ParticipantStore] Firestore quota limit reached (${reason}). Seamlessly operating via central Express backend & local cache.`);
-    }
+    markFirestoreExhausted();
 
     if (this.firestoreParticipantsUnsub) {
       try {
@@ -135,7 +164,10 @@ class ParticipantStore {
 
   // Real-time Firestore snapshot listeners across all PCs
   private initFirestoreListeners() {
-    if (this.firestoreDisabled) return;
+    if (this.firestoreDisabled || isFirestoreQuotaExhausted()) {
+      this.firestoreDisabled = true;
+      return;
+    }
 
     try {
       if (!db) {
@@ -183,12 +215,9 @@ class ParticipantStore {
           }
         },
         (error) => {
-          const msg = error?.message || '';
-          const code = (error as any)?.code || '';
-          if (code === 'resource-exhausted' || msg.includes('Quota') || msg.includes('quota') || msg.includes('resource-exhausted')) {
+          if (isQuotaError(error)) {
             this.disableFirestore('daily write/read quota reached');
           } else {
-            console.warn('Firestore snapshot notice (syncing via central server):', msg);
             this.firestoreConnected = false;
           }
         }
@@ -211,15 +240,15 @@ class ParticipantStore {
           }
         },
         (err) => {
-          const msg = err?.message || '';
-          const code = (err as any)?.code || '';
-          if (code === 'resource-exhausted' || msg.includes('Quota') || msg.includes('quota')) {
+          if (isQuotaError(err)) {
             this.disableFirestore('quota reached');
           }
         }
       );
     } catch (e: any) {
-      this.disableFirestore(e?.message || 'initialization notice');
+      if (isQuotaError(e)) {
+        this.disableFirestore(e?.message || 'initialization notice');
+      }
     }
   }
 
@@ -468,12 +497,11 @@ class ParticipantStore {
     const docId = safeDocId(targetRecord.registerNumber, targetRecord.id);
 
     const firestorePromise = (async () => {
-      if (db && !this.firestoreDisabled) {
+      if (db && !this.firestoreDisabled && !isFirestoreQuotaExhausted()) {
         try {
           await setDoc(doc(db, 'participants', docId), cleanData, { merge: true });
         } catch (err: any) {
-          const msg = err?.message || '';
-          if (err?.code === 'resource-exhausted' || msg.includes('Quota') || msg.includes('quota')) {
+          if (isQuotaError(err)) {
             this.disableFirestore('quota reached on write');
           }
         }
@@ -523,11 +551,11 @@ class ParticipantStore {
     const cleanData = sanitizeForFirestore(updates);
 
     const firestorePromise = (async () => {
-      if (db && !this.firestoreDisabled) {
+      if (db && !this.firestoreDisabled && !isFirestoreQuotaExhausted()) {
         try {
           await setDoc(doc(db, 'participants', docId), cleanData, { merge: true });
         } catch (err: any) {
-          if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota')) {
+          if (isQuotaError(err)) {
             this.disableFirestore('quota reached');
           }
         }
@@ -579,11 +607,15 @@ class ParticipantStore {
     this.setLocalCache(updated);
 
     const firestorePromise = (async () => {
-      if (db && !this.firestoreDisabled) {
+      if (db && !this.firestoreDisabled && !isFirestoreQuotaExhausted()) {
         try {
           const docId = safeDocId(upperTarget, rawTarget);
           await deleteDoc(doc(db, 'participants', docId));
-        } catch (_) {}
+        } catch (err: any) {
+          if (isQuotaError(err)) {
+            this.disableFirestore('quota reached');
+          }
+        }
       }
     })();
 
@@ -627,7 +659,7 @@ class ParticipantStore {
     this.setLocalCache([]);
 
     const firestorePromise = (async () => {
-      if (db && !this.firestoreDisabled) {
+      if (db && !this.firestoreDisabled && !isFirestoreQuotaExhausted()) {
         try {
           const batch = writeBatch(db);
           cached.slice(0, 100).forEach((p) => {
@@ -635,7 +667,11 @@ class ParticipantStore {
             batch.delete(doc(db, 'participants', docId));
           });
           await batch.commit();
-        } catch (_) {}
+        } catch (err: any) {
+          if (isQuotaError(err)) {
+            this.disableFirestore('quota reached');
+          }
+        }
       }
     })();
 
@@ -673,7 +709,7 @@ class ParticipantStore {
     this.setLocalCache(list);
 
     const firestorePromise = (async () => {
-      if (db && !this.firestoreDisabled) {
+      if (db && !this.firestoreDisabled && !isFirestoreQuotaExhausted()) {
         try {
           const batch = writeBatch(db);
           list.slice(0, 50).forEach((p) => {
@@ -683,7 +719,7 @@ class ParticipantStore {
           });
           await batch.commit();
         } catch (err: any) {
-          if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota')) {
+          if (isQuotaError(err)) {
             this.disableFirestore('quota reached');
           }
         }
@@ -758,7 +794,7 @@ class ParticipantStore {
     this.setLocalCache(updated);
 
     const firestorePromise = (async () => {
-      if (db && !this.firestoreDisabled) {
+      if (db && !this.firestoreDisabled && !isFirestoreQuotaExhausted()) {
         try {
           const batch = writeBatch(db);
           toDelete.slice(0, 100).forEach((p) => {
@@ -766,7 +802,11 @@ class ParticipantStore {
             batch.delete(doc(db, 'participants', docId));
           });
           await batch.commit();
-        } catch (_) {}
+        } catch (err: any) {
+          if (isQuotaError(err)) {
+            this.disableFirestore('quota reached');
+          }
+        }
       }
     })();
 
@@ -802,12 +842,12 @@ class ParticipantStore {
     this.setConclusionsCache(updated);
 
     const firestorePromise = (async () => {
-      if (db && !this.firestoreDisabled) {
+      if (db && !this.firestoreDisabled && !isFirestoreQuotaExhausted()) {
         try {
           const clean = sanitizeForFirestore(updated);
           await setDoc(doc(db, 'system_state', 'conclusions'), clean, { merge: true });
         } catch (err: any) {
-          if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota')) {
+          if (isQuotaError(err)) {
             this.disableFirestore('quota reached');
           }
         }

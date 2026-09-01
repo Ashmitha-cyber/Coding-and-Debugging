@@ -244,7 +244,7 @@ app.post('/api/participants/sync', (req, res) => {
           const mergedRound3 = Math.max(local.round3Score ?? 0, s.round3Score ?? 0);
           const calculatedTotal = mergedRound1 + mergedRound2 + mergedRound3;
           const mergedTotal = Math.max(local.totalScore ?? 0, s.totalScore ?? 0, calculatedTotal);
-          const isQualified = !!(local.qualifiedForRound2 || s.qualifiedForRound2);
+          const isQualified = s.qualifiedForRound2 !== undefined ? s.qualifiedForRound2 : !!local.qualifiedForRound2;
 
           participants[index] = {
             ...s,
