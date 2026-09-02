@@ -461,7 +461,7 @@ export default function App() {
           roundResults={roundResults}
           participant={participant}
           answers={answers}
-          questions={QUESTIONS}
+          questions={allQuestions}
           onRestart={handleRestartExpedition}
         />
       )}

@@ -139,6 +139,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
   const [editorDefaultDept, setEditorDefaultDept] = useState<Department>('IT');
   const [isSyncing, setIsSyncing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const questionFileInputRef = useRef<HTMLInputElement>(null);
 
   // Load data unconditionally on mount / state change + periodic multi-PC sync
   useEffect(() => {
@@ -635,21 +636,64 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
     });
   };
 
-  const handleResetQuestions = () => {
+  const handleClearAllQuestions = () => {
     setConfirmModal({
       isOpen: true,
-      title: 'Reset Challenge Bank?',
-      message: 'Are you sure you want to reset all questions to the official 45 arena challenges across Rounds 1, 2, and 3?',
-      confirmText: 'Reset to Defaults',
-      isDanger: false,
+      title: 'Clear All Arena Questions?',
+      message: 'Are you sure you want to permanently clear and remove ALL questions from the arena challenge bank across Rounds 1, 2, and 3? The website will be empty, allowing you to add custom questions from scratch.',
+      confirmText: 'Wipe All Questions',
+      isDanger: true,
       onConfirm: () => {
-        questionStore.resetToDefaults();
+        questionStore.clearAllQuestions();
         loadQuestions();
         soundManager.playWarning();
-        showNotice('Questions reset to official defaults.');
+        showNotice('All arena questions cleared. You can now add your own questions.');
         setConfirmModal(null);
       }
     });
+  };
+
+  const handleExportQuestionsJson = () => {
+    const list = questionStore.getAllQuestions();
+    if (list.length === 0) {
+      showNotice('No questions currently in bank to export.');
+      return;
+    }
+    const blob = new Blob([JSON.stringify(list, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `triquetra26_questions_${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showNotice(`Exported ${list.length} questions as JSON.`);
+  };
+
+  const handleImportQuestionsJson = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target?.result as string;
+        const parsed = JSON.parse(text);
+        const res = questionStore.importQuestions(parsed);
+        if (res.success) {
+          loadQuestions();
+          soundManager.playSuccess();
+          showNotice(`Successfully imported ${res.count} questions into the arena!`);
+        } else {
+          showNotice(res.error || 'Failed to import questions');
+        }
+      } catch (err) {
+        showNotice('Invalid JSON format for questions file.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   // Helper to get ranked list for a department or all
@@ -1523,7 +1567,45 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
             {/* ========================================================================= */}
             {activeTab === 'QUESTIONS' && (
               <div className="p-4 sm:p-6 overflow-y-auto space-y-4 flex-1">
-                {/* Header Actions */}
+                {/* Stats & Quick Summary Banner */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <div className="p-3 bg-[#050c1f] rounded-xl border border-gray-800 flex items-center justify-between">
+                    <div>
+                      <div className="text-[10px] font-mono text-gray-400 uppercase">Total Questions</div>
+                      <div className="text-lg font-bold font-mono text-white mt-0.5">{questions.length}</div>
+                    </div>
+                    <Layers className="w-4 h-4 text-[#00f0ff]" />
+                  </div>
+                  <div className="p-3 bg-[#050c1f] rounded-xl border border-gray-800 flex items-center justify-between">
+                    <div>
+                      <div className="text-[10px] font-mono text-cyan-400 uppercase">Round 1 (Bug Scan)</div>
+                      <div className="text-lg font-bold font-mono text-cyan-300 mt-0.5">
+                        {questions.filter((q) => q.round === 1).length}
+                      </div>
+                    </div>
+                    <span className="w-2 h-2 rounded-full bg-[#00f0ff]" />
+                  </div>
+                  <div className="p-3 bg-[#050c1f] rounded-xl border border-gray-800 flex items-center justify-between">
+                    <div>
+                      <div className="text-[10px] font-mono text-amber-400 uppercase">Round 2 (Code Repair)</div>
+                      <div className="text-lg font-bold font-mono text-amber-300 mt-0.5">
+                        {questions.filter((q) => q.round === 2).length}
+                      </div>
+                    </div>
+                    <span className="w-2 h-2 rounded-full bg-[#ff9e00]" />
+                  </div>
+                  <div className="p-3 bg-[#050c1f] rounded-xl border border-gray-800 flex items-center justify-between">
+                    <div>
+                      <div className="text-[10px] font-mono text-purple-400 uppercase">Round 3 (Boss Arena)</div>
+                      <div className="text-lg font-bold font-mono text-purple-300 mt-0.5">
+                        {questions.filter((q) => q.round === 3).length}
+                      </div>
+                    </div>
+                    <span className="w-2 h-2 rounded-full bg-[#a855f7]" />
+                  </div>
+                </div>
+
+                {/* Header Actions Toolbar */}
                 <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-[#050c1f] rounded-xl border border-gray-800">
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="relative">
@@ -1533,7 +1615,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
                         value={questionSearch}
                         onChange={(e) => setQuestionSearch(e.target.value)}
                         placeholder="Search challenges..."
-                        className="bg-[#0b1633] border border-gray-700 focus:border-[#00f0ff] rounded-lg pl-8 pr-3 py-1.5 text-xs text-white font-mono focus:outline-none w-48 sm:w-60"
+                        className="bg-[#0b1633] border border-gray-700 focus:border-[#00f0ff] rounded-lg pl-8 pr-3 py-1.5 text-xs text-white font-mono focus:outline-none w-44 sm:w-56"
                       />
                     </div>
 
@@ -1549,116 +1631,194 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
                               : 'bg-[#0b1633] text-gray-400 hover:text-white'
                           }`}
                         >
-                          {r === 0 ? 'All Rounds' : `R${r}`}
+                          {r === 0 ? 'All' : `R${r}`}
                         </button>
                       ))}
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* Hidden Questions JSON File Input */}
+                    <input
+                      type="file"
+                      ref={questionFileInputRef}
+                      onChange={handleImportQuestionsJson}
+                      accept=".json"
+                      className="hidden"
+                    />
+
+                    {/* Import Questions */}
+                    <button
+                      onClick={() => questionFileInputRef.current?.click()}
+                      className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white font-mono text-xs flex items-center gap-1.5 cursor-pointer border border-gray-700"
+                      title="Import Questions JSON"
+                    >
+                      <Upload className="w-3.5 h-3.5 text-cyan-400" />
+                      <span className="hidden sm:inline">Import</span>
+                    </button>
+
+                    {/* Export Questions */}
+                    <button
+                      onClick={handleExportQuestionsJson}
+                      className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white font-mono text-xs flex items-center gap-1.5 cursor-pointer border border-gray-700"
+                      title="Export Questions JSON"
+                    >
+                      <Download className="w-3.5 h-3.5 text-emerald-400" />
+                      <span className="hidden sm:inline">Export</span>
+                    </button>
+
+                    {/* Clear All Questions Button */}
+                    <button
+                      onClick={handleClearAllQuestions}
+                      className="px-2.5 py-1.5 rounded-lg bg-red-950/40 hover:bg-red-950/80 text-red-300 hover:text-red-200 font-mono text-xs flex items-center gap-1.5 cursor-pointer border border-red-500/40"
+                      title="Wipe and clear all arena challenges"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                      <span>Clear All</span>
+                    </button>
+
+                    {/* Add New Question Button */}
                     <button
                       onClick={() => {
                         setQuestionToEdit(null);
                         setIsEditorOpen(true);
                       }}
-                      className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-mono text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                      className="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-500 hover:opacity-90 text-black font-mono text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-[0_0_15px_rgba(16,185,129,0.35)]"
                     >
-                      <Plus className="w-3.5 h-3.5" /> New Question
-                    </button>
-                    <button
-                      onClick={handleResetQuestions}
-                      className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white font-mono text-xs flex items-center gap-1 cursor-pointer"
-                      title="Reset to 45 Arena Defaults"
-                    >
-                      <RotateCcw className="w-3 h-3" /> Reset Defaults
+                      <Plus className="w-3.5 h-3.5 stroke-[3]" /> Add Question
                     </button>
                   </div>
                 </div>
 
-                {/* Question List */}
-                <div className="space-y-2">
-                  {filteredQuestions.map((q) => {
-                    const isExpanded = expandedQuestionId === q.id;
-
-                    return (
-                      <div
-                        key={q.id}
-                        className="bg-[#050c1f] rounded-xl border border-gray-800 hover:border-gray-700 transition-colors overflow-hidden"
+                {/* Question List or Empty State */}
+                {filteredQuestions.length === 0 ? (
+                  <div className="p-10 rounded-2xl bg-[#050c1f] border border-gray-800 text-center space-y-4">
+                    <div className="w-14 h-14 rounded-2xl bg-[#00f0ff]/10 border border-[#00f0ff]/30 mx-auto flex items-center justify-center text-[#00f0ff]">
+                      <Code className="w-7 h-7" />
+                    </div>
+                    <div className="space-y-1.5 max-w-md mx-auto">
+                      <h3 className="text-sm font-bold text-white font-mono uppercase tracking-wider">
+                        {questions.length === 0 ? 'Challenge Bank Is Empty' : 'No Matching Questions Found'}
+                      </h3>
+                      <p className="text-xs text-gray-400 font-mono leading-relaxed">
+                        {questions.length === 0
+                          ? 'All default questions have been cleared. Click "+ Add Question" below to start creating custom arena questions, or import a JSON file.'
+                          : 'Try changing your search keywords or switching the round filter.'}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+                      <button
+                        onClick={() => {
+                          setQuestionToEdit(null);
+                          setIsEditorOpen(true);
+                        }}
+                        className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#00d2ff] to-[#0055ff] text-black font-mono font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-[0_0_20px_rgba(0,240,255,0.3)]"
                       >
-                        <div className="p-3 sm:p-4 flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-3 flex-1 min-w-0">
-                            <span className="w-8 h-8 rounded-lg bg-[#0b1633] border border-gray-700 flex items-center justify-center font-mono font-bold text-xs text-[#00f0ff] flex-shrink-0">
-                              #{q.questionNumber}
-                            </span>
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-purple-500/20 text-purple-300">
-                                  Round {q.round}
-                                </span>
-                                <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-cyan-500/20 text-cyan-300 uppercase">
-                                  {q.language}
-                                </span>
-                                <span className="text-[10px] font-mono text-gray-400">
-                                  {q.category}
-                                </span>
+                        <Plus className="w-3.5 h-3.5 stroke-[3]" /> Add First Question
+                      </button>
+                      <button
+                        onClick={() => questionFileInputRef.current?.click()}
+                        className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 font-mono text-xs flex items-center gap-1.5 cursor-pointer border border-gray-700"
+                      >
+                        <Upload className="w-3.5 h-3.5" /> Import JSON
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {filteredQuestions.map((q) => {
+                      const isExpanded = expandedQuestionId === q.id;
+
+                      return (
+                        <div
+                          key={q.id}
+                          className="bg-[#050c1f] rounded-xl border border-gray-800 hover:border-gray-700 transition-colors overflow-hidden"
+                        >
+                          <div className="p-3 sm:p-4 flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-3 flex-1 min-w-0">
+                              <span className="w-8 h-8 rounded-lg bg-[#0b1633] border border-gray-700 flex items-center justify-center font-mono font-bold text-xs text-[#00f0ff] flex-shrink-0">
+                                #{q.questionNumber}
+                              </span>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-purple-500/20 text-purple-300">
+                                    Round {q.round}
+                                  </span>
+                                  <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-cyan-500/20 text-cyan-300 uppercase">
+                                    {q.language}
+                                  </span>
+                                  <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-gray-800 text-gray-300">
+                                    {q.difficulty.toUpperCase()}
+                                  </span>
+                                  <span className="text-[10px] font-mono text-gray-400">
+                                    {q.category}
+                                  </span>
+                                </div>
+                                <h4 className="font-bold text-white text-xs sm:text-sm truncate mt-0.5">
+                                  {q.title}
+                                </h4>
                               </div>
-                              <h4 className="font-bold text-white text-xs sm:text-sm truncate mt-0.5">
-                                {q.title}
-                              </h4>
+                            </div>
+
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              <button
+                                onClick={() => {
+                                  setQuestionToEdit(q);
+                                  setIsEditorOpen(true);
+                                }}
+                                className="p-1.5 rounded-lg bg-[#0b1633] hover:bg-[#122452] text-gray-300 hover:text-white cursor-pointer"
+                                title="Edit Question"
+                              >
+                                <Edit3 className="w-3.5 h-3.5 text-[#00f0ff]" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteQuestion(q.id)}
+                                className="p-1.5 rounded-lg bg-[#0b1633] hover:bg-red-950/80 text-gray-500 hover:text-red-400 cursor-pointer"
+                                title="Delete Question"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => setExpandedQuestionId(isExpanded ? null : q.id)}
+                                className="p-1.5 rounded-lg bg-[#0b1633] text-gray-400 hover:text-white cursor-pointer"
+                              >
+                                {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                              </button>
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-2 flex-shrink-0">
-                            <button
-                              onClick={() => {
-                                setQuestionToEdit(q);
-                                setIsEditorOpen(true);
-                              }}
-                              className="p-1.5 rounded-lg bg-[#0b1633] hover:bg-[#122452] text-gray-300 hover:text-white cursor-pointer"
-                              title="Edit Question"
-                            >
-                              <Edit3 className="w-3.5 h-3.5 text-[#00f0ff]" />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteQuestion(q.id)}
-                              className="p-1.5 rounded-lg bg-[#0b1633] hover:bg-red-950/80 text-gray-500 hover:text-red-400 cursor-pointer"
-                              title="Delete Question"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => setExpandedQuestionId(isExpanded ? null : q.id)}
-                              className="p-1.5 rounded-lg bg-[#0b1633] text-gray-400 hover:text-white cursor-pointer"
-                            >
-                              {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                            </button>
-                          </div>
+                          {/* Expanded Code & Details */}
+                          {isExpanded && (
+                            <div className="px-4 pb-4 pt-1 border-t border-gray-800/80 bg-[#030817] space-y-3">
+                              {q.description && (
+                                <p className="text-xs text-gray-300 font-sans leading-relaxed">{q.description}</p>
+                              )}
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs font-mono">
+                                <div className="bg-[#050c1f] p-3 rounded-lg border border-red-500/20">
+                                  <div className="text-[10px] text-red-400 font-bold mb-1">INITIAL / BROKEN CODE:</div>
+                                  <pre className="text-red-200 text-[11px] overflow-x-auto whitespace-pre-wrap">
+                                    {q.brokenCode}
+                                  </pre>
+                                </div>
+                                <div className="bg-[#050c1f] p-3 rounded-lg border border-emerald-500/20">
+                                  <div className="text-[10px] text-emerald-400 font-bold mb-1">EXPECTED SOLUTION:</div>
+                                  <pre className="text-emerald-300 text-[11px] overflow-x-auto whitespace-pre-wrap">
+                                    {q.expectedAnswer}
+                                  </pre>
+                                </div>
+                              </div>
+                              {q.expectedOutput && (
+                                <div className="text-[11px] font-mono text-gray-400 bg-[#050c1f] px-3 py-1.5 rounded-lg border border-gray-800">
+                                  <span className="text-[#00f0ff] font-bold">Target Output:</span> {q.expectedOutput}
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
-
-                        {/* Expanded Code & Details */}
-                        {isExpanded && (
-                          <div className="px-4 pb-4 pt-1 border-t border-gray-800/80 bg-[#030817] space-y-3">
-                            <p className="text-xs text-gray-300">{q.description}</p>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs font-mono">
-                              <div className="bg-[#050c1f] p-3 rounded-lg border border-gray-800">
-                                <div className="text-[10px] text-red-400 font-bold mb-1">INITIAL / BROKEN CODE:</div>
-                                <pre className="text-gray-300 text-[11px] overflow-x-auto whitespace-pre-wrap">
-                                  {q.brokenCode}
-                                </pre>
-                              </div>
-                              <div className="bg-[#050c1f] p-3 rounded-lg border border-gray-800">
-                                <div className="text-[10px] text-emerald-400 font-bold mb-1">CORRECT SOLUTION:</div>
-                                <pre className="text-emerald-300 text-[11px] overflow-x-auto whitespace-pre-wrap">
-                                  {q.fixedCode}
-                                </pre>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1669,7 +1829,8 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
       {isEditorOpen && (
         <AdminQuestionEditorModal
           isOpen={isEditorOpen}
-          initialQuestion={questionToEdit}
+          questionToEdit={questionToEdit}
+          defaultRound={selectedRoundFilter > 0 ? (selectedRoundFilter as 1 | 2 | 3) : 1}
           onClose={() => {
             setIsEditorOpen(false);
             setQuestionToEdit(null);

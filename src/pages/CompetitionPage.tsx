@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, Upload, AlertTriangle, Cpu, Clock, ShieldCheck, FileCode, Check } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Upload, AlertTriangle, Cpu, Clock, ShieldCheck, FileCode, Check, Layers, AlertCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Question, QuestionAnswerState, ParticipantInfo } from '../types';
 import { QuestionNavigator } from '../components/QuestionNavigator';
@@ -30,24 +30,61 @@ export const CompetitionPage: React.FC<CompetitionPageProps> = ({
   onUpdateAnswer,
   onSubmitRound
 }) => {
-  const currentQuestion = questions[currentQuestionIndex];
-  const questionIdOffset = (round - 1) * 15 + 1;
-  const currentAnswerState = answers[currentQuestion.id] || {
+  const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false);
+
+  // Safe question resolution
+  const hasQuestions = questions && questions.length > 0;
+  const safeIndex = Math.min(Math.max(0, currentQuestionIndex), Math.max(0, questions.length - 1));
+  const currentQuestion = hasQuestions ? questions[safeIndex] : null;
+
+  const currentAnswerState = currentQuestion ? (answers[currentQuestion.id] || {
     code: currentQuestion.brokenCode,
     isAnswered: false
-  };
+  }) : null;
 
-  const [localCode, setLocalCode] = useState(currentAnswerState.code || currentQuestion.brokenCode);
-  const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false);
+  const [localCode, setLocalCode] = useState(
+    currentQuestion ? (currentAnswerState?.code || currentQuestion.brokenCode) : ''
+  );
 
   // Sync local code when active question changes
   useEffect(() => {
-    const saved = answers[currentQuestion.id];
-    setLocalCode(saved?.code !== undefined ? saved.code : currentQuestion.brokenCode);
-  }, [currentQuestion.id, answers]);
+    if (currentQuestion) {
+      const saved = answers[currentQuestion.id];
+      setLocalCode(saved?.code !== undefined ? saved.code : currentQuestion.brokenCode);
+    }
+  }, [currentQuestion?.id, answers]);
 
-  // Answered / modified count calculation
-  const answeredCount = questions.filter(q => answers[q.id]?.isAnswered).length;
+  if (!hasQuestions || !currentQuestion) {
+    return (
+      <main className="pt-24 pb-28 px-4 max-w-4xl mx-auto flex flex-col items-center justify-center text-center text-white min-h-[70vh]">
+        <div className="p-8 rounded-2xl bg-[#081026]/90 border border-[#00f0ff]/30 backdrop-blur-xl shadow-[0_0_50px_rgba(0,240,255,0.15)] max-w-lg w-full space-y-5">
+          <div className="w-16 h-16 rounded-2xl bg-[#00f0ff]/10 border border-[#00f0ff]/30 mx-auto flex items-center justify-center text-[#00f0ff]">
+            <Layers className="w-8 h-8" />
+          </div>
+          <div className="space-y-2">
+            <span className="px-2.5 py-1 rounded text-[11px] font-mono font-bold bg-[#00f0ff]/20 text-[#00f0ff] uppercase">
+              ROUND 0{round} STATUS
+            </span>
+            <h2 className="text-xl font-bold tracking-wide">No Active Challenges Configured</h2>
+            <p className="text-xs text-gray-400 font-mono leading-relaxed">
+              The question bank is currently clear. The administrator can add new customized challenges for Round 0{round} in the Admin Control Panel.
+            </p>
+          </div>
+          <div className="pt-2 flex flex-col sm:flex-row gap-3 justify-center">
+            <button
+              onClick={onSubmitRound}
+              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#00d2ff] to-[#0055ff] text-black font-mono font-bold text-xs hover:opacity-90 transition-all cursor-pointer"
+            >
+              Continue to Round Summary
+            </button>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  const questionIdOffset = (round - 1) * 15 + 1;
+  const answeredCount = questions.filter((q) => answers[q.id]?.isAnswered).length;
 
   const handleCodeChange = (newCode: string) => {
     setLocalCode(newCode);
@@ -56,22 +93,21 @@ export const CompetitionPage: React.FC<CompetitionPageProps> = ({
   };
 
   const handlePrev = () => {
-    if (currentQuestionIndex > 0) {
+    if (safeIndex > 0) {
       soundManager.playBeep(520, 'sine', 0.04);
-      onSelectQuestion(currentQuestionIndex - 1);
+      onSelectQuestion(safeIndex - 1);
     }
   };
 
   const handleNext = () => {
-    if (currentQuestionIndex < questions.length - 1) {
+    if (safeIndex < questions.length - 1) {
       soundManager.playBeep(580, 'sine', 0.04);
-      onSelectQuestion(currentQuestionIndex + 1);
+      onSelectQuestion(safeIndex + 1);
     }
   };
 
   return (
     <main className="pt-20 pb-28 px-3 sm:px-6 md:px-8 max-w-[1440px] mx-auto flex flex-col gap-4 text-white">
-      
       {/* Top Status Strip */}
       <div className="flex justify-between items-center w-full px-1">
         <div className="flex items-center gap-2">
@@ -86,23 +122,22 @@ export const CompetitionPage: React.FC<CompetitionPageProps> = ({
         </div>
 
         <div className="text-[11px] font-mono text-gray-400">
-          LEVEL 0{round} // QUESTION {currentQuestionIndex + 1} OF 15
+          LEVEL 0{round} // QUESTION {safeIndex + 1} OF {questions.length}
         </div>
       </div>
 
       {/* Stepper / Question Navigator Matrix */}
       <QuestionNavigator
         totalQuestions={questions.length}
-        currentIndex={currentQuestionIndex}
+        currentIndex={safeIndex}
         answers={answers}
         questions={questions}
         questionIdOffset={questionIdOffset}
         onSelectQuestion={onSelectQuestion}
       />
 
-      {/* Main Workspace Grid (Left 5 Cols: Problem Spec & Broken Snippet, Right 7 Cols: IDE Editor) */}
+      {/* Main Workspace Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch min-h-[480px]">
-        
         {/* Left Column (5 Cols): Problem Specification & Broken Code Display */}
         <motion.section
           key={`problem-${currentQuestion.id}`}
@@ -126,7 +161,7 @@ export const CompetitionPage: React.FC<CompetitionPageProps> = ({
             {/* Question Title */}
             <div>
               <h2 className="text-xl md:text-2xl font-bold text-white tracking-wide">
-                {(currentQuestionIndex + 1).toString().padStart(2, '0')}. {currentQuestion.title}
+                {(safeIndex + 1).toString().padStart(2, '0')}. {currentQuestion.title}
               </h2>
             </div>
 
@@ -173,7 +208,7 @@ export const CompetitionPage: React.FC<CompetitionPageProps> = ({
           </div>
         </motion.section>
 
-        {/* Right Column (7 Cols): IDE Terminal Editor (NO check code button) */}
+        {/* Right Column (7 Cols): IDE Terminal Editor */}
         <motion.div
           key={`editor-${currentQuestion.id}`}
           initial={{ opacity: 0, x: 10 }}
@@ -187,7 +222,6 @@ export const CompetitionPage: React.FC<CompetitionPageProps> = ({
             onChange={handleCodeChange}
           />
         </motion.div>
-
       </div>
 
       {/* Bottom Action Nav Bar */}
@@ -195,7 +229,7 @@ export const CompetitionPage: React.FC<CompetitionPageProps> = ({
         {/* Previous Button */}
         <button
           onClick={handlePrev}
-          disabled={currentQuestionIndex === 0}
+          disabled={safeIndex === 0}
           className="flex items-center gap-2 text-gray-300 hover:text-white hover:bg-[#0b1633] disabled:opacity-40 disabled:hover:bg-transparent rounded-xl px-4 py-2.5 transition-all font-mono text-xs cursor-pointer disabled:cursor-not-allowed"
         >
           <ChevronLeft className="w-4 h-4" />
@@ -216,7 +250,7 @@ export const CompetitionPage: React.FC<CompetitionPageProps> = ({
         {/* Next Button */}
         <button
           onClick={handleNext}
-          disabled={currentQuestionIndex === questions.length - 1}
+          disabled={safeIndex === questions.length - 1}
           className="flex items-center gap-2 text-gray-300 hover:text-white hover:bg-[#0b1633] disabled:opacity-40 disabled:hover:bg-transparent rounded-xl px-4 py-2.5 transition-all font-mono text-xs cursor-pointer disabled:cursor-not-allowed"
         >
           <span className="hidden sm:inline">NEXT</span>
