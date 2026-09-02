@@ -215,18 +215,17 @@ app.post('/api/participants/sync', (req, res) => {
   try {
     const { localParticipants } = req.body;
     let modified = false;
-    const delSet = new Set(deletedParticipants.map((d) => String(d).toUpperCase().trim()).filter(Boolean));
 
     if (Array.isArray(localParticipants)) {
       for (const local of localParticipants) {
         if (!local || (!local.registerNumber && !local.id)) continue;
         const regNo = (local.registerNumber || '').toUpperCase().trim();
-        const localId = (local.id || '').trim();
+        const localId = local.id || '';
 
         // Tombstone check: If participant was explicitly deleted, do NOT resurrect it!
         if (
-          (regNo && delSet.has(regNo)) ||
-          (localId && delSet.has(localId.toUpperCase()))
+          (regNo && deletedParticipants.includes(regNo)) ||
+          (localId && deletedParticipants.includes(localId))
         ) {
           continue;
         }
@@ -245,7 +244,7 @@ app.post('/api/participants/sync', (req, res) => {
           const mergedRound3 = Math.max(local.round3Score ?? 0, s.round3Score ?? 0);
           const calculatedTotal = mergedRound1 + mergedRound2 + mergedRound3;
           const mergedTotal = Math.max(local.totalScore ?? 0, s.totalScore ?? 0, calculatedTotal);
-          const isQualified = s.qualifiedForRound2 !== undefined ? s.qualifiedForRound2 : !!local.qualifiedForRound2;
+          const isQualified = !!(local.qualifiedForRound2 || s.qualifiedForRound2);
 
           participants[index] = {
             ...s,
@@ -308,7 +307,6 @@ app.post('/api/participants/sync', (req, res) => {
     return res.json({
       success: true,
       participants,
-      deletedIds: deletedParticipants,
       count: participants.length,
       timestamp: new Date().toISOString()
     });
@@ -320,20 +318,15 @@ app.post('/api/participants/sync', (req, res) => {
 
 // GET all participants (accessed by any PC / Admin panel / Leaderboard)
 app.get('/api/participants', (req, res) => {
-  const delSet = new Set(deletedParticipants.map((d) => String(d).toUpperCase().trim()).filter(Boolean));
+  const delSet = new Set(deletedParticipants.map((d) => String(d).toUpperCase().trim()));
   const filtered = participants.filter((p) => {
     const reg = (p.registerNumber || '').toUpperCase().trim();
     const id = (p.id || '').toUpperCase().trim();
     return (!reg || !delSet.has(reg)) && (!id || !delSet.has(id));
   });
-  if (filtered.length !== participants.length) {
-    participants = filtered;
-    saveJsonFile(PARTICIPANTS_FILE, participants);
-  }
   res.json({
     success: true,
     participants: filtered,
-    deletedIds: deletedParticipants,
     count: filtered.length,
     timestamp: new Date().toISOString()
   });
@@ -480,13 +473,11 @@ app.delete('/api/participants/:idOrRegNo', (req, res) => {
     // Record tombstones so background multi-PC syncs do not resurrect this record
     toDelete.forEach((p) => {
       if (p.registerNumber) deletedParticipants.push(p.registerNumber.toUpperCase());
-      if (p.id) deletedParticipants.push(p.id.toUpperCase());
+      if (p.id) deletedParticipants.push(p.id);
     });
     if (targetUpper) deletedParticipants.push(targetUpper);
-    if (rawTarget) deletedParticipants.push(rawTarget.toUpperCase());
-    deletedParticipants = Array.from(
-      new Set(deletedParticipants.map((s) => String(s).toUpperCase().trim()).filter(Boolean))
-    );
+    if (rawTarget) deletedParticipants.push(rawTarget);
+    deletedParticipants = Array.from(new Set(deletedParticipants));
 
     saveJsonFile(PARTICIPANTS_FILE, participants);
     saveJsonFile(DELETED_FILE, deletedParticipants);
@@ -494,7 +485,6 @@ app.delete('/api/participants/:idOrRegNo', (req, res) => {
     return res.json({
       success: true,
       deleted: rawTarget,
-      deletedIds: deletedParticipants,
       participants
     });
   } catch (err: any) {
@@ -509,7 +499,7 @@ app.post('/api/participants/bulk', (req, res) => {
     if (Array.isArray(list)) {
       participants = list;
       saveJsonFile(PARTICIPANTS_FILE, participants);
-      return res.json({ success: true, count: participants.length, deletedIds: deletedParticipants, participants });
+      return res.json({ success: true, count: participants.length, participants });
     }
     return res.status(400).json({ success: false, error: 'Invalid list format' });
   } catch (err: any) {
@@ -527,16 +517,14 @@ app.post('/api/participants/clear-dept', (req, res) => {
 
       removed.forEach((p) => {
         if (p.registerNumber) deletedParticipants.push(p.registerNumber.toUpperCase());
-        if (p.id) deletedParticipants.push(p.id.toUpperCase());
+        if (p.id) deletedParticipants.push(p.id);
       });
-      deletedParticipants = Array.from(
-        new Set(deletedParticipants.map((s) => String(s).toUpperCase().trim()).filter(Boolean))
-      );
+      deletedParticipants = Array.from(new Set(deletedParticipants));
 
       saveJsonFile(PARTICIPANTS_FILE, participants);
       saveJsonFile(DELETED_FILE, deletedParticipants);
 
-      return res.json({ success: true, clearedDept: department, deletedIds: deletedParticipants, participants });
+      return res.json({ success: true, clearedDept: department, participants });
     }
     return res.status(400).json({ success: false, error: 'Department code required' });
   } catch (err: any) {
@@ -549,17 +537,15 @@ app.post('/api/participants/clear-all', (req, res) => {
   try {
     participants.forEach((p) => {
       if (p.registerNumber) deletedParticipants.push(p.registerNumber.toUpperCase());
-      if (p.id) deletedParticipants.push(p.id.toUpperCase());
+      if (p.id) deletedParticipants.push(p.id);
     });
     participants = [];
-    deletedParticipants = Array.from(
-      new Set(deletedParticipants.map((s) => String(s).toUpperCase().trim()).filter(Boolean))
-    );
+    deletedParticipants = Array.from(new Set(deletedParticipants));
 
     saveJsonFile(PARTICIPANTS_FILE, participants);
     saveJsonFile(DELETED_FILE, deletedParticipants);
 
-    return res.json({ success: true, deletedIds: deletedParticipants, participants: [] });
+    return res.json({ success: true, participants: [] });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
   }

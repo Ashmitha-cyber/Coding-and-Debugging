@@ -16,55 +16,14 @@ const STORAGE_KEY = 'triquetra_participants';
 const CONCLUSIONS_KEY_PREFIX = 'triquetra_round1_concluded';
 const PARTICIPANTS_UPDATED_EVENT = 'triquetra_participants_updated';
 const CONCLUSIONS_UPDATED_EVENT = 'triquetra_round1_concluded_event';
-const FIRESTORE_EXHAUSTED_KEY = 'triquetra_firestore_exhausted_timestamp';
+const FIRESTORE_EXHAUSTED_KEY = 'triquetra_firestore_exhausted';
 const DELETED_IDS_KEY = 'triquetra_deleted_ids';
-const EXHAUSTION_CACHE_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 export interface ConclusionsState {
   IT: boolean;
   AIDS: boolean;
   CSBS: boolean;
   global: boolean;
-}
-
-function isFirestoreQuotaExhausted(): boolean {
-  try {
-    if (typeof window === 'undefined') return false;
-    const stored = localStorage.getItem(FIRESTORE_EXHAUSTED_KEY);
-    if (!stored) return false;
-    const ts = parseInt(stored, 10);
-    if (isNaN(ts)) return stored === 'true';
-    if (Date.now() - ts < EXHAUSTION_CACHE_MS) {
-      return true;
-    }
-    localStorage.removeItem(FIRESTORE_EXHAUSTED_KEY);
-    return false;
-  } catch (_) {
-    return false;
-  }
-}
-
-function markFirestoreExhausted() {
-  try {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem(FIRESTORE_EXHAUSTED_KEY, Date.now().toString());
-    }
-  } catch (_) {}
-}
-
-function isQuotaError(err: any): boolean {
-  if (!err) return false;
-  const code = (err.code || '').toLowerCase();
-  const msg = (err.message || '').toLowerCase();
-  return (
-    code === 'resource-exhausted' ||
-    code === 'permission-denied' ||
-    code === 'unavailable' ||
-    msg.includes('quota') ||
-    msg.includes('resource-exhausted') ||
-    msg.includes('exceeded') ||
-    msg.includes('maximum backoff')
-  );
 }
 
 function getDeletedTombstones(): Set<string> {
@@ -128,9 +87,13 @@ class ParticipantStore {
   public firestoreDisabled = false;
 
   constructor() {
-    if (isFirestoreQuotaExhausted()) {
-      this.firestoreDisabled = true;
-    } else {
+    try {
+      if (typeof window !== 'undefined' && sessionStorage.getItem(FIRESTORE_EXHAUSTED_KEY) === 'true') {
+        this.firestoreDisabled = true;
+      }
+    } catch (_) {}
+
+    if (!this.firestoreDisabled) {
       this.initFirestoreListeners();
     }
   }
@@ -140,7 +103,15 @@ class ParticipantStore {
     if (this.firestoreDisabled) return;
     this.firestoreDisabled = true;
     this.firestoreConnected = false;
-    markFirestoreExhausted();
+    try {
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem(FIRESTORE_EXHAUSTED_KEY, 'true');
+      }
+    } catch (_) {}
+
+    if (reason) {
+      console.warn(`[ParticipantStore] Firestore quota limit reached (${reason}). Seamlessly operating via central Express backend & local cache.`);
+    }
 
     if (this.firestoreParticipantsUnsub) {
       try {
@@ -164,10 +135,7 @@ class ParticipantStore {
 
   // Real-time Firestore snapshot listeners across all PCs
   private initFirestoreListeners() {
-    if (this.firestoreDisabled || isFirestoreQuotaExhausted()) {
-      this.firestoreDisabled = true;
-      return;
-    }
+    if (this.firestoreDisabled) return;
 
     try {
       if (!db) {
@@ -215,9 +183,12 @@ class ParticipantStore {
           }
         },
         (error) => {
-          if (isQuotaError(error)) {
+          const msg = error?.message || '';
+          const code = (error as any)?.code || '';
+          if (code === 'resource-exhausted' || msg.includes('Quota') || msg.includes('quota') || msg.includes('resource-exhausted')) {
             this.disableFirestore('daily write/read quota reached');
           } else {
+            console.warn('Firestore snapshot notice (syncing via central server):', msg);
             this.firestoreConnected = false;
           }
         }
@@ -240,15 +211,15 @@ class ParticipantStore {
           }
         },
         (err) => {
-          if (isQuotaError(err)) {
+          const msg = err?.message || '';
+          const code = (err as any)?.code || '';
+          if (code === 'resource-exhausted' || msg.includes('Quota') || msg.includes('quota')) {
             this.disableFirestore('quota reached');
           }
         }
       );
     } catch (e: any) {
-      if (isQuotaError(e)) {
-        this.disableFirestore(e?.message || 'initialization notice');
-      }
+      this.disableFirestore(e?.message || 'initialization notice');
     }
   }
 
@@ -355,28 +326,22 @@ class ParticipantStore {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-          'Pragma': 'no-cache'
+          'Cache-Control': 'no-cache'
         },
         body: JSON.stringify({ localParticipants })
       });
 
       if (res.ok) {
         const data = await res.json();
-        if (data.success) {
-          if (Array.isArray(data.deletedIds)) {
-            data.deletedIds.forEach((id: string) => addDeletedTombstone(id));
-          }
-          if (Array.isArray(data.participants)) {
-            const tombstones = getDeletedTombstones();
-            const cleanServerList = data.participants.filter((p: ParticipantRecord) => {
-              const reg = (p.registerNumber || '').toUpperCase().trim();
-              const id = (p.id || '').toUpperCase().trim();
-              return (!reg || !tombstones.has(reg)) && (!id || !tombstones.has(id));
-            });
-            this.setLocalCache(cleanServerList);
-            return cleanServerList;
-          }
+        if (data.success && Array.isArray(data.participants)) {
+          const tombstones = getDeletedTombstones();
+          const cleanServerList = data.participants.filter((p: ParticipantRecord) => {
+            const reg = (p.registerNumber || '').toUpperCase().trim();
+            const id = (p.id || '').toUpperCase().trim();
+            return (!reg || !tombstones.has(reg)) && (!id || !tombstones.has(id));
+          });
+          this.setLocalCache(cleanServerList);
+          return cleanServerList;
         }
       }
     } catch (e) {
@@ -389,6 +354,8 @@ class ParticipantStore {
 
   // Fetch all participants from BOTH Firestore and Central Server, merging seamlessly
   async fetchAllParticipants(): Promise<ParticipantRecord[]> {
+    const tombstones = getDeletedTombstones();
+
     let serverList: ParticipantRecord[] | null = null;
     try {
       const res = await fetch('/api/participants', {
@@ -399,18 +366,12 @@ class ParticipantStore {
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.success) {
-          if (Array.isArray(data.deletedIds)) {
-            data.deletedIds.forEach((id: string) => addDeletedTombstone(id));
-          }
-          if (Array.isArray(data.participants)) {
-            const tombstones = getDeletedTombstones();
-            serverList = data.participants.filter((p: ParticipantRecord) => {
-              const reg = (p.registerNumber || '').toUpperCase().trim();
-              const id = (p.id || '').toUpperCase().trim();
-              return (!reg || !tombstones.has(reg)) && (!id || !tombstones.has(id));
-            });
-          }
+        if (data.success && Array.isArray(data.participants)) {
+          serverList = data.participants.filter((p: ParticipantRecord) => {
+            const reg = (p.registerNumber || '').toUpperCase().trim();
+            const id = (p.id || '').toUpperCase().trim();
+            return (!reg || !tombstones.has(reg)) && (!id || !tombstones.has(id));
+          });
         }
       }
     } catch (e) {
@@ -507,11 +468,12 @@ class ParticipantStore {
     const docId = safeDocId(targetRecord.registerNumber, targetRecord.id);
 
     const firestorePromise = (async () => {
-      if (db && !this.firestoreDisabled && !isFirestoreQuotaExhausted()) {
+      if (db && !this.firestoreDisabled) {
         try {
           await setDoc(doc(db, 'participants', docId), cleanData, { merge: true });
         } catch (err: any) {
-          if (isQuotaError(err)) {
+          const msg = err?.message || '';
+          if (err?.code === 'resource-exhausted' || msg.includes('Quota') || msg.includes('quota')) {
             this.disableFirestore('quota reached on write');
           }
         }
@@ -561,11 +523,11 @@ class ParticipantStore {
     const cleanData = sanitizeForFirestore(updates);
 
     const firestorePromise = (async () => {
-      if (db && !this.firestoreDisabled && !isFirestoreQuotaExhausted()) {
+      if (db && !this.firestoreDisabled) {
         try {
           await setDoc(doc(db, 'participants', docId), cleanData, { merge: true });
         } catch (err: any) {
-          if (isQuotaError(err)) {
+          if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota')) {
             this.disableFirestore('quota reached');
           }
         }
@@ -617,15 +579,11 @@ class ParticipantStore {
     this.setLocalCache(updated);
 
     const firestorePromise = (async () => {
-      if (db && !this.firestoreDisabled && !isFirestoreQuotaExhausted()) {
+      if (db && !this.firestoreDisabled) {
         try {
           const docId = safeDocId(upperTarget, rawTarget);
           await deleteDoc(doc(db, 'participants', docId));
-        } catch (err: any) {
-          if (isQuotaError(err)) {
-            this.disableFirestore('quota reached');
-          }
-        }
+        } catch (_) {}
       }
     })();
 
@@ -640,19 +598,14 @@ class ParticipantStore {
         });
         if (res.ok) {
           const data = await res.json();
-          if (data.success) {
-            if (Array.isArray(data.deletedIds)) {
-              data.deletedIds.forEach((id: string) => addDeletedTombstone(id));
-            }
-            if (Array.isArray(data.participants)) {
-              const tombstones = getDeletedTombstones();
-              const cleanServer = data.participants.filter((p: ParticipantRecord) => {
-                const r = (p.registerNumber || '').toUpperCase().trim();
-                const i = (p.id || '').toUpperCase().trim();
-                return (!r || !tombstones.has(r)) && (!i || !tombstones.has(i));
-              });
-              this.setLocalCache(cleanServer);
-            }
+          if (data.success && Array.isArray(data.participants)) {
+            const tombstones = getDeletedTombstones();
+            const cleanServer = data.participants.filter((p: ParticipantRecord) => {
+              const r = (p.registerNumber || '').toUpperCase().trim();
+              const i = (p.id || '').toUpperCase().trim();
+              return (!r || !tombstones.has(r)) && (!i || !tombstones.has(i));
+            });
+            this.setLocalCache(cleanServer);
           }
         }
       } catch (e) {
@@ -674,7 +627,7 @@ class ParticipantStore {
     this.setLocalCache([]);
 
     const firestorePromise = (async () => {
-      if (db && !this.firestoreDisabled && !isFirestoreQuotaExhausted()) {
+      if (db && !this.firestoreDisabled) {
         try {
           const batch = writeBatch(db);
           cached.slice(0, 100).forEach((p) => {
@@ -682,11 +635,7 @@ class ParticipantStore {
             batch.delete(doc(db, 'participants', docId));
           });
           await batch.commit();
-        } catch (err: any) {
-          if (isQuotaError(err)) {
-            this.disableFirestore('quota reached');
-          }
-        }
+        } catch (_) {}
       }
     })();
 
@@ -702,11 +651,8 @@ class ParticipantStore {
         });
         if (res.ok) {
           const data = await res.json();
-          if (data.success) {
-            if (Array.isArray(data.deletedIds)) {
-              data.deletedIds.forEach((id: string) => addDeletedTombstone(id));
-            }
-            this.setLocalCache([]);
+          if (data.success && Array.isArray(data.participants)) {
+            this.setLocalCache(data.participants);
           }
         }
       } catch (e) {
@@ -727,7 +673,7 @@ class ParticipantStore {
     this.setLocalCache(list);
 
     const firestorePromise = (async () => {
-      if (db && !this.firestoreDisabled && !isFirestoreQuotaExhausted()) {
+      if (db && !this.firestoreDisabled) {
         try {
           const batch = writeBatch(db);
           list.slice(0, 50).forEach((p) => {
@@ -737,7 +683,7 @@ class ParticipantStore {
           });
           await batch.commit();
         } catch (err: any) {
-          if (isQuotaError(err)) {
+          if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota')) {
             this.disableFirestore('quota reached');
           }
         }
@@ -812,7 +758,7 @@ class ParticipantStore {
     this.setLocalCache(updated);
 
     const firestorePromise = (async () => {
-      if (db && !this.firestoreDisabled && !isFirestoreQuotaExhausted()) {
+      if (db && !this.firestoreDisabled) {
         try {
           const batch = writeBatch(db);
           toDelete.slice(0, 100).forEach((p) => {
@@ -820,11 +766,7 @@ class ParticipantStore {
             batch.delete(doc(db, 'participants', docId));
           });
           await batch.commit();
-        } catch (err: any) {
-          if (isQuotaError(err)) {
-            this.disableFirestore('quota reached');
-          }
-        }
+        } catch (_) {}
       }
     })();
 
@@ -832,28 +774,13 @@ class ParticipantStore {
       try {
         const res = await fetch('/api/participants/clear-dept', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-            'Pragma': 'no-cache'
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ department })
         });
         if (res.ok) {
           const data = await res.json();
-          if (data.success) {
-            if (Array.isArray(data.deletedIds)) {
-              data.deletedIds.forEach((id: string) => addDeletedTombstone(id));
-            }
-            if (Array.isArray(data.participants)) {
-              const tombstones = getDeletedTombstones();
-              const clean = data.participants.filter((p: ParticipantRecord) => {
-                const r = (p.registerNumber || '').toUpperCase().trim();
-                const i = (p.id || '').toUpperCase().trim();
-                return (!r || !tombstones.has(r)) && (!i || !tombstones.has(i));
-              });
-              this.setLocalCache(clean);
-            }
+          if (data.success && Array.isArray(data.participants)) {
+            this.setLocalCache(data.participants);
           }
         }
       } catch (e) {
@@ -875,12 +802,12 @@ class ParticipantStore {
     this.setConclusionsCache(updated);
 
     const firestorePromise = (async () => {
-      if (db && !this.firestoreDisabled && !isFirestoreQuotaExhausted()) {
+      if (db && !this.firestoreDisabled) {
         try {
           const clean = sanitizeForFirestore(updated);
           await setDoc(doc(db, 'system_state', 'conclusions'), clean, { merge: true });
         } catch (err: any) {
-          if (isQuotaError(err)) {
+          if (err?.code === 'resource-exhausted' || err?.message?.includes('Quota')) {
             this.disableFirestore('quota reached');
           }
         }
@@ -916,7 +843,7 @@ class ParticipantStore {
   }
 
   // Start periodic polling
-  startPolling(intervalMs: number = 2000): () => void {
+  startPolling(intervalMs: number = 2500): () => void {
     this.fetchAllParticipants();
     this.fetchConclusions();
 
@@ -929,24 +856,10 @@ class ParticipantStore {
       this.fetchConclusions();
     }, intervalMs);
 
-    const handleFocus = () => {
-      this.fetchAllParticipants();
-      this.fetchConclusions();
-    };
-
-    if (typeof window !== 'undefined') {
-      window.addEventListener('focus', handleFocus);
-      window.addEventListener('visibilitychange', handleFocus);
-    }
-
     return () => {
       if (this.pollingInterval) {
         clearInterval(this.pollingInterval);
         this.pollingInterval = null;
-      }
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('focus', handleFocus);
-        window.removeEventListener('visibilitychange', handleFocus);
       }
       if (this.firestoreParticipantsUnsub) {
         try {

@@ -114,15 +114,6 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
   const [notification, setNotification] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Conclude Successful Dialog State
-  const [concludeSuccessModal, setConcludeSuccessModal] = useState<{
-    isOpen: boolean;
-    departmentName: string;
-    deptCode: string;
-    qualifiedCount: number;
-    qualifiedList: ParticipantRecord[];
-  } | null>(null);
-
   // In-App Confirmation Modal State (Reliable across all browsers and sandboxed iframes)
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
@@ -332,8 +323,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
   // Conclude Round 1 for a specific department
   const handleConcludeDepartment = async (dept: Department) => {
     const deptParticipants = participants.filter((p) => p.department === dept);
-    const qualifiedList = deptParticipants.filter((p) => !!p.qualifiedForRound2);
-    const qualifiedCount = qualifiedList.length;
+    const qualifiedCount = deptParticipants.filter((p) => p.qualifiedForRound2).length;
 
     // Update statuses for this department
     const updated = participants.map((p) => {
@@ -352,14 +342,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
     await loadAllConclusions();
 
     soundManager.playSuccess();
-    showNotice(`✅ Round 1 Concluded Successfully for ${DEPARTMENTS[dept].name}! (${qualifiedCount} Teams Qualified)`);
-    setConcludeSuccessModal({
-      isOpen: true,
-      departmentName: DEPARTMENTS[dept].name,
-      deptCode: DEPARTMENTS[dept].code,
-      qualifiedCount,
-      qualifiedList
-    });
+    showNotice(`🎉 Concluded Round 1 for ${DEPARTMENTS[dept].name}! (${qualifiedCount} Teams Qualified)`);
   };
 
   // Reopen Round 1 for a specific department
@@ -377,23 +360,14 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
       resultStatus: p.qualifiedForRound2 ? ('Qualified' as const) : ('Not Qualified' as const)
     }));
 
-    const qualifiedList = updated.filter((p) => !!p.qualifiedForRound2);
-    const totalQual = qualifiedList.length;
-
     await participantStore.saveBulkParticipants(updated);
     await participantStore.saveConclusions({ IT: true, AIDS: true, CSBS: true, global: true });
     await loadParticipants();
     await loadAllConclusions();
 
     soundManager.playSuccess();
-    showNotice(`✅ Round 1 Concluded Successfully across ALL Departments! (${totalQual} Total Qualified)`);
-    setConcludeSuccessModal({
-      isOpen: true,
-      departmentName: 'All 3 Departments (IT, AI&DS, CSBS)',
-      deptCode: 'ALL',
-      qualifiedCount: totalQual,
-      qualifiedList
-    });
+    const totalQual = updated.filter((p) => p.qualifiedForRound2).length;
+    showNotice(`🎉 Concluded Round 1 across ALL 3 Departments! (${totalQual} Total Qualified)`);
   };
 
   // Select Top N in a given department
@@ -1761,87 +1735,6 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ isOpen, onClos
               >
                 {confirmModal.isDanger && <Trash2 className="w-3.5 h-3.5" />}
                 <span>{confirmModal.confirmText}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Conclude Round 1 Success Dialog */}
-      {concludeSuccessModal && concludeSuccessModal.isOpen && (
-        <div className="fixed inset-0 z-[130] bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="w-full max-w-lg bg-gradient-to-b from-[#08182b] via-[#061224] to-[#040a16] border-2 border-emerald-400/60 rounded-3xl p-6 sm:p-8 shadow-[0_0_60px_rgba(16,185,129,0.35)] animate-in fade-in zoom-in duration-200 space-y-5">
-            <div className="flex items-center gap-4">
-              <div className="w-14 h-14 rounded-2xl bg-emerald-500/20 border border-emerald-400/50 flex items-center justify-center text-emerald-400 shrink-0 shadow-[0_0_25px_rgba(16,185,129,0.4)]">
-                <CheckCircle2 className="w-8 h-8 stroke-[2.5] animate-bounce" />
-              </div>
-              <div className="min-w-0">
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 text-[10px] font-mono font-bold uppercase tracking-wider">
-                  <Sparkles className="w-3 h-3" /> OFFICIAL EVALUATION PUBLISHED
-                </div>
-                <h3 className="text-lg sm:text-xl font-black font-mono text-white tracking-wide uppercase mt-1">
-                  CONCLUDE SUCCESSFUL!
-                </h3>
-                <p className="text-xs font-mono text-emerald-400 font-bold truncate">
-                  {concludeSuccessModal.departmentName}
-                </p>
-              </div>
-            </div>
-
-            <div className="p-4 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 space-y-2">
-              <div className="text-xs font-mono font-bold text-white flex items-center justify-between">
-                <span>QUALIFIED PARTICIPANTS SHORTLISTED:</span>
-                <span className="px-2.5 py-0.5 rounded bg-emerald-500/30 text-emerald-300 font-mono font-extrabold text-sm border border-emerald-400/50">
-                  {concludeSuccessModal.qualifiedCount} Qualified
-                </span>
-              </div>
-              <p className="text-xs text-gray-300 leading-relaxed font-sans">
-                Round 1 evaluation is now concluded. All <strong className="text-emerald-400">{concludeSuccessModal.qualifiedCount} selected participant(s)</strong> have been authorized in the central database and can now immediately advance to <strong className="text-white font-mono">Round 2: CODE REPAIR</strong> on their workstations.
-              </p>
-            </div>
-
-            {/* List of qualified participants */}
-            {concludeSuccessModal.qualifiedList.length > 0 && (
-              <div className="space-y-2">
-                <div className="text-[11px] font-mono text-gray-400 uppercase tracking-wider">
-                  SHORTLISTED CANDIDATES FOR ROUND 2:
-                </div>
-                <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
-                  {concludeSuccessModal.qualifiedList.map((p, idx) => (
-                    <div
-                      key={p.registerNumber || p.id || idx}
-                      className="p-2 rounded-xl bg-[#0b1633] border border-emerald-500/30 flex items-center justify-between text-xs font-mono"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-300 flex items-center justify-center text-[10px] font-bold">
-                          #{idx + 1}
-                        </span>
-                        <div>
-                          <div className="text-white font-bold">{p.teamName || p.name}</div>
-                          <div className="text-[10px] text-gray-400">
-                            Reg: {p.registerNumber} {p.partnerName ? `· Partner: ${p.partnerName}` : ''}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold border border-emerald-500/30">
-                          R1: {p.round1Score ?? 0}/15
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="pt-2">
-              <button
-                type="button"
-                onClick={() => setConcludeSuccessModal(null)}
-                className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-400 to-teal-500 hover:opacity-95 text-black font-extrabold font-mono text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-[0_0_25px_rgba(16,185,129,0.4)] cursor-pointer transition-all active:scale-95"
-              >
-                <CheckCircle2 className="w-4 h-4 stroke-[2.5]" />
-                <span>CONFIRM &amp; RETURN TO DATABASE HUB</span>
               </button>
             </div>
           </div>
